@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en" id="html-root">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>gBet Greyhound Race Predictor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDK Scripts -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+        }
+    </script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-100 dark:bg-slate-950 font-sans text-slate-800 dark:text-slate-100 h-screen flex flex-col transition-colors duration-200">
+
+    <!-- Notification Toast -->
+    <div id="notification" class="bg-red-500 text-white px-6 py-3 rounded shadow-lg flex items-center">
+        <span id="notification-text">Message</span>
+        <button onclick="closeNotification()" class="ml-4 text-white font-bold">&times;</button>
+    </div>
+
+    <!-- Header & Batch File Dropzones -->
+    <header class="bg-white dark:bg-slate-900 shadow-sm p-4 border-b border-slate-200 dark:border-slate-800 transition-colors duration-200 flex-shrink-0">
+        <div class="max-w-7xl mx-auto flex flex-col lg:flex-row justify-between items-center gap-4">
+            <div class="flex flex-col gap-2 w-full lg:w-auto">
+                <div class="flex items-center gap-3">
+                    <h1 class="text-2xl font-black text-slate-900 dark:text-white tracking-tight">gBet <span class="font-light text-slate-500 dark:text-slate-400">Greyhound Race Predictor</span></h1>
+                    <button onclick="toggleTheme()" class="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-xs font-bold shadow-sm" title="Toggle Dark/Light Mode">
+                        <span id="theme-icon">🌙</span>
+                    </button>
+                </div>
+                <div id="race-selector-container" class="hidden items-center gap-2">
+                    <label class="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Active Race:</label>
+                    <select id="raceSelector" onchange="switchActiveRace(this.value)" class="text-sm px-3 py-1 border border-slate-300 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-semibold focus:outline-none focus:ring-2 focus:ring-slate-800">
+                    </select>
+                    <button onclick="renameActiveRace()" title="Rename active race entry" class="p-1 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 rounded text-slate-700 dark:text-slate-300 text-xs font-bold transition-colors">✏️</button>
+                </div>
+            </div>
+
+            <div class="hidden sm:flex flex-col items-start bg-slate-50 dark:bg-slate-800/80 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs max-w-xs flex-shrink-0">
+                <div class="flex items-center gap-2 mb-1">
+                    <div id="header-live-status-symbol" class="w-3.5 h-3.5 rounded-full bg-red-500 flex-shrink-0 shadow-sm" title="Disconnected"></div>
+                    <span id="header-live-file-status" class="font-mono text-[11px] text-slate-700 dark:text-slate-300 truncate" title="Firebase Cloud Status">Connecting to Firebase...</span>
+                </div>
+                <button id="header-reconnect-btn" onclick="initFirebaseSync()" class="hidden w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-2 rounded shadow transition-colors text-[10px] whitespace-nowrap">
+                    🔄 Reconnect Cloud
+                </button>
+            </div>
+            
+            <div class="flex flex-col sm:flex-row gap-3 w-full lg:w-auto items-center">
+                <div id="txtDropZone" class="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-slate-800 dark:hover:border-slate-400 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg p-3 text-center cursor-pointer transition-colors flex-1 sm:w-52 relative">
+                    <input type="file" id="txtFileInput" accept=".txt" multiple class="absolute inset-0 opacity-0 cursor-pointer w-full h-full"/>
+                    <div class="pointer-events-none">
+                        <span class="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">📁 Import Details (TXT)</span>
+                        <span id="txtFileLabel" class="block text-xs text-slate-400 truncate mt-0.5">Drag files or click</span>
+                    </div>
+                </div>
+
+                <div id="csvDropZone" class="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-slate-800 dark:hover:border-slate-400 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg p-3 text-center cursor-pointer transition-colors flex-1 sm:w-52 relative">
+                    <input type="file" id="csvFileInput" accept=".csv" multiple class="absolute inset-0 opacity-0 cursor-pointer w-full h-full"/>
+                    <div class="pointer-events-none">
+                        <span class="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">📊 Import Stats (CSV)</span>
+                        <span id="csvFileLabel" class="block text-xs text-slate-400 truncate mt-0.5">Drag files or click</span>
+                    </div>
+                </div>
+
+                <div class="flex sm:flex-col gap-1 w-full sm:w-auto">
+                    <button onclick="clearActiveMeetingsData()" class="bg-amber-600 hover:bg-amber-700 text-white font-bold py-1.5 px-3 rounded text-xs shadow transition-colors whitespace-nowrap" title="Clear imported race meetings">🗑️ Clear Meetings</button>
+                    <button onclick="clearDogStatsData()" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-1.5 px-3 rounded text-xs shadow transition-colors whitespace-nowrap" title="Clear imported dog statistics">🗑️ Clear Stats</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Backup Reminder Banner -->
+    <div id="backup-reminder-banner" class="hidden bg-amber-500 text-white px-4 py-2 text-xs font-bold flex justify-between items-center flex-shrink-0">
+        <span>⚠️ Snapshot Reminder: You have imported several new meetings since your last backup. Export a snapshot to secure your master database!</span>
+        <div class="space-x-2">
+            <button onclick="exportDatabaseSnapshot(); hideBackupReminder();" class="bg-white text-amber-900 px-2.5 py-1 rounded shadow">Download Now</button>
+            <button onclick="hideBackupReminder()" class="text-white hover:underline">Dismiss</button>
+        </div>
+    </div>
+
+    <!-- Main App Container -->
+    <main class="max-w-7xl mx-auto w-full flex-grow p-4 flex flex-col md:flex-row gap-4 overflow-hidden">
+        
+        <aside id="vertical-race-ribbon" class="hidden md:flex flex-col w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 shadow-sm flex-shrink-0 self-start mt-14 max-h-[calc(100vh-140px)]">
+            <div class="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 pb-2 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between flex-shrink-0">
+                <span>⚡ Quick Jump</span>
+                <span id="ribbon-count" class="font-mono text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">0</span>
+            </div>
+            <div id="vertical-pills-strip" class="flex flex-col overflow-y-auto vertical-race-ribbon pr-1">
+                <span class="text-xs text-slate-400 italic text-center py-4">No meetings imported</span>
+            </div>
+        </aside>
+
+        <div class="flex-grow flex flex-col overflow-hidden">
+            
+            <div class="flex border-b border-slate-300 dark:border-slate-800 mb-4 overflow-x-auto flex-shrink-0">
+                <button class="tab-btn px-4 py-2 font-bold text-slate-900 dark:text-white border-b-2 border-slate-900 dark:border-white focus:outline-none whitespace-nowrap transition-colors" onclick="openTab(event, 'race-details')">Race Details</button>
+                <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors" onclick="openTab(event, 'dog-stats')">Dog Statistics</button>
+                <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors" onclick="openTab(event, 'batch-summary-tab')">Meeting Summary</button>
+                <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors" onclick="openTab(event, 'predictions')">Analysis & Predictions</button>
+                <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors" onclick="openTab(event, 'saved-tab')">Saved Predictions</button>
+                <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors" onclick="openTab(event, 'settings-tab')">⚙️ Settings</button>
+                <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors" onclick="openTab(event, 'app-info')">App Info</button>
+            </div>
+
+            <!-- Tab 1: Race Details -->
+            <div id="race-details" class="tab-content active bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm overflow-auto flex-grow transition-colors duration-200">
+                <div class="bg-slate-50 dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700 mb-6">
+                    <h3 class="font-bold text-slate-900 dark:text-white text-sm mb-1">⚡ TABtouch 1-Click Clipboard Importer</h3>
+                    <p class="text-xs text-slate-600 dark:text-slate-300 mb-3">
+                        1. Enter Date (<span class="font-mono">DDMMYYYY</span>), Fixture ID (<span class="font-mono">CD/PD</span>), and Race Number. 2. Click <strong>Open TABtouch URL</strong>. 3. Press <kbd class="px-1 bg-slate-200 dark:bg-slate-700 rounded font-mono">Ctrl+A</kbd> then <kbd class="px-1 bg-slate-200 dark:bg-slate-700 rounded font-mono">Ctrl+C</kbd>. 4. Click <strong>Auto-Import from Clipboard</strong>!
+                    </p>
+                    <div class="grid grid-cols-1 sm:grid-cols-4 gap-2.5 text-xs mb-3">
+                        <div>
+                            <label class="block font-bold text-slate-600 dark:text-slate-300 mb-1">Date (DDMMYYYY)</label>
+                            <input type="text" id="tt-date" placeholder="07102026" class="w-full px-2 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 dark:text-slate-300 mb-1">Fixture ID (CD/PD)</label>
+                            <input type="text" id="tt-fixture" placeholder="PD" class="w-full px-2 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono uppercase font-bold"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 dark:text-slate-300 mb-1">Race Number</label>
+                            <input type="number" id="tt-race" placeholder="11" min="1" max="15" class="w-full px-2 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono"/>
+                        </div>
+                        <div class="flex items-end">
+                            <button onclick="openTabtouchExportUrl()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-1.5 px-3 rounded shadow transition-colors text-xs whitespace-nowrap">
+                                🌐 1. Open URL
+                            </button>
+                        </div>
+                    </div>
+                    <div class="flex justify-end pt-2 border-t border-slate-200 dark:border-slate-700">
+                        <button onclick="importFromClipboard()" class="bg-green-600 hover:bg-green-700 text-white font-bold py-1.5 px-4 rounded shadow transition-colors text-xs flex items-center gap-1.5">
+                            📋 2. Auto-Import from Clipboard
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+                    <h2 class="text-xl font-bold text-slate-900 dark:text-white" id="race-title">Race Details (Pending Import)</h2>
+                    <button onclick="syncResultsWithSavedHistory()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-3 rounded shadow transition-colors text-xs flex items-center gap-1.5 whitespace-nowrap">
+                        🔄 Sync Results with Saved History
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-100 dark:bg-slate-800 text-sm uppercase tracking-wider text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700">
+                                <th class="p-3">Box</th>
+                                <th class="p-3">Dog Name & Stats Status</th>
+                                <th class="p-3">Trainer</th>
+                                <th class="p-3">Win Div</th>
+                                <th class="p-3">Place Div</th>
+                                <th class="p-3">Placing</th>
+                                <th class="p-3">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="starters-tbody" class="text-sm divide-y divide-slate-100 dark:divide-slate-800">
+                            <tr><td colspan="7" class="p-4 text-center text-slate-400 font-medium">No race data loaded. Please import TXT meeting files or use TABtouch Importer above.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab 2: Dog Stats -->
+            <div id="dog-stats" class="tab-content bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm overflow-auto flex-grow transition-colors duration-200">
+                <div class="flex flex-col sm:flex-row justify-between items-center gap-4 mb-4">
+                    <div class="flex items-center gap-3">
+                        <h2 class="text-xl font-bold text-slate-900 dark:text-white">Dog Statistics History</h2>
+                        <a href="https://www.thedogs.com.au/racing/the-print-hub" target="_blank" title="Open The Print Hub on thedogs.com.au" class="inline-flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-2.5 py-1 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-700 transition-colors shadow-sm">
+                            <svg class="w-4 h-4 text-slate-800 dark:text-white flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                            </svg>
+                            <span>The Print Hub</span>
+                        </a>
+                    </div>
+                    <div class="flex items-center gap-2 w-full sm:w-auto">
+                        <button onclick="toggleManualEntryDrawer()" class="bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 text-white text-xs font-bold py-2 px-3 rounded shadow transition-colors whitespace-nowrap">➕ Add Manual Run / Trial</button>
+                        <input type="text" id="statsSearchInput" onkeyup="filterStatsTable()" placeholder="🔍 Search dog name..." class="text-sm px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 w-full sm:w-64"/>
+                    </div>
+                </div>
+
+                <div id="manual-entry-drawer" class="hidden bg-slate-50 dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700 mb-6 transition-all text-xs">
+                    <h3 class="font-bold text-slate-900 dark:text-white text-sm mb-3">📝 Add Manual Race Run/Trial Record</h3>
+                    <div class="grid grid-cols-2 sm:grid-cols-5 md:grid-cols-10 gap-2 mb-3">
+                        <div>
+                            <label class="block font-bold text-slate-600 dark:text-slate-300 mb-1">Dog Name</label>
+                            <input type="text" id="m-name" placeholder="e.g. ROCKET" class="w-full px-2 py-1 border rounded bg-white dark:bg-slate-900 font-bold"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 dark:text-slate-300 mb-1">Date</label>
+                            <input type="text" id="m-date" placeholder="YYYY-MM-DD" class="w-full px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 dark:text-slate-300 mb-1">Sex</label>
+                            <select id="m-sex" class="w-full px-2 py-1 border rounded bg-white dark:bg-slate-900">
+                                <option value="">-- Select Sex --</option>
+                                <option value="Dog">Dog</option>
+                                <option value="Bitch">Bitch</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 dark:text-slate-300 mb-1">Place (PLC)</label>
+                            <input type="text" id="m-plc" placeholder="1, 2, 3..." class="w-full px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 dark:text-slate-300 mb-1">Box</label>
+                            <input type="text" id="m-box" placeholder="1-8" class="w-full px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 dark:text-slate-300 mb-1">Dist (m)</label>
+                            <input type="text" id="m-dist" placeholder="520" class="w-full px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 dark:text-slate-300 mb-1">Track</label>
+                            <input type="text" id="m-track" placeholder="CANNINGTON" class="w-full px-2 py-1 border rounded bg-white dark:bg-slate-900"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 dark:text-slate-300 mb-1">PIR</label>
+                            <input type="text" id="m-pir" placeholder="111" class="w-full px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 dark:text-slate-300 mb-1">1Sec Split</label>
+                            <input type="text" id="m-split1" placeholder="5.55" class="w-full px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-600 dark:text-slate-300 mb-1">Time</label>
+                            <input type="text" id="m-time" placeholder="29.85" class="w-full px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/>
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button onclick="toggleManualEntryDrawer()" class="bg-slate-400 hover:bg-slate-500 text-white font-bold py-1 px-3 rounded shadow transition-colors">Cancel</button>
+                        <button onclick="submitManualStatRow()" class="bg-green-600 hover:bg-green-700 text-white font-bold py-1 px-4 rounded shadow transition-colors">Save & Add Record</button>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="min-w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-100 dark:bg-slate-800 text-sm uppercase tracking-wider text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700">
+                                <th class="p-3">Dog Name</th>
+                                <th class="p-3">Date</th>
+                                <th class="p-3">Sex</th>
+                                <th class="p-3">Place</th>
+                                <th class="p-3">Box</th>
+                                <th class="p-3">Dist</th>
+                                <th class="p-3">Track</th>
+                                <th class="p-3">PIR</th>
+                                <th class="p-3">1SEC</th>
+                                <th class="p-3">Time</th>
+                                <th class="p-3 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="stats-tbody" class="text-sm divide-y divide-slate-100 dark:divide-slate-800">
+                            <tr><td colspan="11" class="p-4 text-center text-slate-400 font-medium">No stats loaded. Please import CSV files or add manual records.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab 3: Meeting Summary Dashboard -->
+            <div id="batch-summary-tab" class="tab-content bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm flex-grow overflow-auto transition-colors duration-200">
+                <h2 class="text-2xl font-black text-slate-900 dark:text-white mb-4 tracking-tight">⚡ Batch Meeting Summary Dashboard</h2>
+                <p class="text-slate-600 dark:text-slate-300 mb-6 text-sm">Overview of imported race meetings sorted alphabetically by track name and ascending race number.</p>
+                <div id="batch-cards-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    <div class="col-span-full p-8 text-center text-slate-400 italic">No race meetings imported yet. Please upload TXT meeting files.</div>
+                </div>
+            </div>
+
+            <!-- Tab 4: Predictions -->
+            <div id="predictions" class="tab-content bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm flex-grow overflow-auto transition-colors duration-200">
+                <div class="flex flex-col lg:flex-row justify-between items-start lg:items-start gap-4 mb-4">
+                    <div>
+                        <h2 class="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Dynamic Predictions</h2>
+                        <div id="predictions-race-subtitle" class="text-lg font-medium text-slate-500 dark:text-slate-400 mt-1"></div>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+                        <button onclick="toggleWeightsDrawer()" class="bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold py-2 px-3.5 rounded-lg shadow-sm transition-colors text-sm flex items-center gap-1.5 whitespace-nowrap">
+                            ⚙️ Model Weights
+                        </button>
+                        <button onclick="refreshPredictions()" class="bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors text-sm whitespace-nowrap">
+                            Refresh Predictions
+                        </button>
+                        <button onclick="saveCurrentPredictions()" class="bg-green-700 hover:bg-green-800 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors text-sm whitespace-nowrap">
+                            Save Predictions
+                        </button>
+                    </div>
+                </div>
+
+                <div id="weights-drawer" class="hidden bg-slate-50 dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700 mb-6 transition-all">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 pb-3 border-b border-slate-200 dark:border-slate-700">
+                        <div>
+                            <h3 class="font-bold text-slate-900 dark:text-white text-base">🎛️ Model Weights Customizer</h3>
+                            <p class="text-xs text-slate-500 dark:text-slate-400">Fine-tune handicapping coefficients or apply optimized distance presets.</p>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button onclick="applyPreset('sprint')" class="bg-sky-600 hover:bg-sky-700 text-white font-bold py-1.5 px-3 rounded shadow text-xs transition-colors whitespace-nowrap">⚡ Sprint Preset</button>
+                            <button onclick="applyPreset('distance')" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-1.5 px-3 rounded shadow text-xs transition-colors whitespace-nowrap">🏆 Distance Preset</button>
+                            <button onclick="resetDefaultWeights()" class="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white underline font-semibold ml-2">Reset Baseline</button>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-3 text-xs">
+                        <div>
+                            <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">WinDiv: <span id="val-w-windiv" class="font-mono text-slate-900 dark:text-white">0.4</span></label>
+                            <input type="range" id="w-windiv" min="0" max="2" step="0.1" value="0.4" oninput="updateWeightVal('windiv')" class="w-full"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">BestTime: <span id="val-w-besttime" class="font-mono text-slate-900 dark:text-white">0.5</span></label>
+                            <input type="range" id="w-besttime" min="0" max="2" step="0.1" value="0.5" oninput="updateWeightVal('besttime')" class="w-full"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">AvgTime: <span id="val-w-avgtime" class="font-mono text-slate-900 dark:text-white">0.6</span></label>
+                            <input type="range" id="w-avgtime" min="0" max="2" step="0.1" value="0.6" oninput="updateWeightVal('avgtime')" class="w-full"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">Best 1Sec: <span id="val-w-best1sec" class="font-mono text-slate-900 dark:text-white">0.5</span></label>
+                            <input type="range" id="w-best1sec" min="0" max="2" step="0.1" value="0.5" oninput="updateWeightVal('best1sec')" class="w-full"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">Avg 1Sec: <span id="val-w-avg1sec" class="font-mono text-slate-900 dark:text-white">0.5</span></label>
+                            <input type="range" id="w-avg1sec" min="0" max="2" step="0.1" value="0.5" oninput="updateWeightVal('avg1sec')" class="w-full"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">EarlyPos: <span id="val-w-earlypos" class="font-mono text-slate-900 dark:text-white">0.4</span></label>
+                            <input type="range" id="w-earlypos" min="0" max="2" step="0.1" value="0.4" oninput="updateWeightVal('earlypos')" class="w-full"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">ClosingGain: <span id="val-w-closinggain" class="font-mono text-slate-900 dark:text-white">0.4</span></label>
+                            <input type="range" id="w-closinggain" min="0" max="2" step="0.1" value="0.4" oninput="updateWeightVal('closinggain')" class="w-full"/>
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">BoxBias: <span id="val-w-boxbias" class="font-mono text-slate-900 dark:text-white">0.5</span></label>
+                            <input type="range" id="w-boxbias" min="0" max="2" step="0.1" value="0.5" oninput="updateWeightVal('boxbias')" class="w-full"/>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <div class="bg-slate-50 dark:bg-slate-800 p-6 rounded-lg border border-slate-200 dark:border-slate-700">
+                        <h3 class="text-xl font-bold text-slate-900 dark:text-white mb-4">🏆 Computed Win Probabilities (Softmax Calibrated)</h3>
+                        <div id="probability-win-meter-container" class="space-y-3">
+                            <div class="text-slate-400 italic">Pending Reanalysis...</div>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-50 dark:bg-slate-800 p-6 rounded-lg border border-slate-200 dark:border-slate-700">
+                        <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
+                            <h3 class="text-xl font-bold text-slate-900 dark:text-white">Winning Dog: <span id="winning-dog-name">TBD</span></h3>
+                            <div id="confidence-indicator-container"></div>
+                        </div>
+                        <p id="winning-dog-desc" class="text-slate-600 dark:text-slate-300">
+                            Import data files and click "Refresh Predictions" to generate the algorithm's top pick based on outlier-filtered times, variant standards, traffic mapping, dynamic box strike rates, and Softmax probability calibration.
+                        </p>
+                    </div>
+                </div>
+
+                <h3 class="text-xl font-bold mb-4 text-slate-900 dark:text-white tracking-tight">Runner Analysis & Form Metrics</h3>
+                <ul id="runner-analysis-list" class="space-y-3 text-slate-700 dark:text-slate-300">
+                    <li class="bg-slate-50 dark:bg-slate-800 p-4 border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm text-slate-400 italic text-center">Data not yet processed.</li>
+                </ul>
+            </div>
+
+            <!-- Tab 5: Saved Predictions Lookup & Performance Tracker -->
+            <div id="saved-tab" class="tab-content bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm flex-grow overflow-auto transition-colors duration-200">
+                <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 mb-6">
+                    <div>
+                        <h2 class="text-2xl font-black text-slate-900 dark:text-white tracking-tight mb-2">History & Performance Tracker</h2>
+                        <button onclick="clearSavedPredictions()" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-sm transition-colors whitespace-nowrap">Clear saved history</button>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+                        <input type="text" id="savedSearchInput" onkeyup="filterSavedHistory()" placeholder="🔍 Filter track, date, status..." class="text-sm px-3.5 py-2 border border-slate-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 w-full sm:w-56"/>
+                        <input type="file" id="importHistoryFileInput" accept=".csv" onchange="importSavedHistoryCSV(event)" class="hidden"/>
+                        <button onclick="document.getElementById('importHistoryFileInput').click()" class="bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 text-white text-sm font-bold py-2 px-3.5 rounded-lg shadow-sm transition-colors whitespace-nowrap">📥 Import</button>
+                        <button onclick="exportSavedHistoryCSV()" class="bg-slate-700 dark:bg-slate-800 hover:bg-slate-600 text-white text-sm font-bold py-2 px-3.5 rounded-lg shadow-sm transition-colors whitespace-nowrap">📤 Export</button>
+                    </div>
+                </div>
+
+                <div class="bg-slate-50 dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700 mb-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div class="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                        <div class="flex items-center gap-2">
+                            <label class="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase">Track:</label>
+                            <select id="filter-track-select" onchange="filterSavedHistory()" class="text-xs px-3 py-2 border border-slate-300 dark:border-slate-700 rounded bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-semibold focus:outline-none min-w-[140px]">
+                                <option value="">All Tracks</option>
+                            </select>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <label class="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase">Date:</label>
+                            <select id="filter-date-select" onchange="filterSavedHistory()" class="text-xs px-3 py-2 border border-slate-300 dark:border-slate-700 rounded bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-semibold focus:outline-none min-w-[140px]">
+                                <option value="">All Dates</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <button onclick="resetSavedFilters()" class="text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-white underline">Reset Filters</button>
+                    </div>
+                </div>
+
+                <div id="performance-metrics-banner" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6 bg-slate-50 dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div class="bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-700">
+                        <span class="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Win Strategy ROI</span>
+                        <div class="flex justify-between items-baseline mt-1">
+                            <span class="text-xs text-slate-400">Record (Settled/Hits):</span>
+                            <span id="metric-win-record" class="text-sm font-black text-slate-900 dark:text-white font-mono">0 / 0</span>
+                        </div>
+                        <div class="flex justify-between items-baseline mt-1">
+                            <span class="text-xs text-slate-400">Strike Rate:</span>
+                            <span id="metric-win-strike" class="text-sm font-black text-green-600 dark:text-green-400 font-mono">0.0%</span>
+                        </div>
+                        <div class="flex justify-between items-baseline mt-1 pt-1 border-t border-slate-100 dark:border-slate-800">
+                            <span class="text-xs font-bold text-slate-500 dark:text-slate-300">Win ROI / $:</span>
+                            <span id="metric-win-roi" class="text-sm font-black text-green-600 dark:text-green-400 font-mono">0.0% ($0.00)</span>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-700">
+                        <span class="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Place Strategy ROI</span>
+                        <div class="flex justify-between items-baseline mt-1">
+                            <span class="text-xs text-slate-400">Record (Settled/Hits):</span>
+                            <span id="metric-place-record" class="text-sm font-black text-slate-900 dark:text-white font-mono">0 / 0</span>
+                        </div>
+                        <div class="flex justify-between items-baseline mt-1">
+                            <span class="text-xs text-slate-400">Strike Rate:</span>
+                            <span id="metric-place-strike" class="text-sm font-black text-blue-600 dark:text-blue-400 font-mono">0.0%</span>
+                        </div>
+                        <div class="flex justify-between items-baseline mt-1 pt-1 border-t border-slate-100 dark:border-slate-800">
+                            <span class="text-xs font-bold text-slate-500 dark:text-slate-300">Place ROI / $:</span>
+                            <span id="metric-place-roi" class="text-sm font-black text-blue-600 dark:text-blue-400 font-mono">0.0% ($0.00)</span>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-700">
+                        <span class="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Combined Summary</span>
+                        <div class="flex justify-between items-baseline mt-1">
+                            <span class="text-xs text-slate-400">Total / Settled:</span>
+                            <span id="metric-total-races" class="text-sm font-black text-slate-900 dark:text-white font-mono">0 / 0</span>
+                        </div>
+                        <div class="flex justify-between items-baseline mt-1">
+                            <span class="text-xs text-slate-400">Combined Wagered:</span>
+                            <span id="metric-combined-turnover" class="text-sm font-black text-slate-900 dark:text-white font-mono">$0.00</span>
+                        </div>
+                        <div class="flex justify-between items-baseline mt-1 pt-1 border-t border-slate-100 dark:border-slate-800">
+                            <span class="text-xs font-bold text-slate-500 dark:text-slate-300">Combined Return:</span>
+                            <span id="metric-combined-return" class="text-sm font-black text-purple-600 dark:text-purple-400 font-mono">$0.00</span>
+                        </div>
+                    </div>
+
+                    <div class="bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-700 flex flex-col justify-between">
+                        <div>
+                            <span class="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-0.5">Combined Strategy ROI / $</span>
+                            <span id="metric-combined-roi" class="text-lg font-black text-purple-600 dark:text-purple-400 font-mono">0.0% ($0.00)</span>
+                        </div>
+                        <div class="pt-2 border-t border-slate-100 dark:border-slate-800 flex justify-between items-baseline">
+                            <span class="text-xs text-slate-500 dark:text-slate-400 font-bold">Combined Strike Rate:</span>
+                            <span id="metric-combined-strike" class="text-sm font-black text-purple-600 dark:text-purple-400 font-mono">0.0%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="saved-predictions-container" class="space-y-4">
+                    <p class="text-slate-400 italic">No saved predictions found in storage.</p>
+                </div>
+            </div>
+
+            <!-- Tab 6: Settings & Firebase Cloud Hub -->
+            <div id="settings-tab" class="tab-content bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm flex-grow overflow-auto space-y-6 transition-colors duration-200">
+                <h2 class="text-2xl font-black text-slate-900 dark:text-white tracking-tight mb-2">☁️ Firebase Cloud Database & Sync Hub</h2>
+                <p class="text-slate-600 dark:text-slate-300 text-sm">
+                    All race meetings, dog stats, model presets, and betting history automatically synchronize with your cloud-hosted Firebase Firestore database in real time.
+                </p>
+
+                <div class="bg-blue-50 dark:bg-blue-950/40 p-4 rounded-lg border border-blue-200 dark:border-blue-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <div class="flex items-center gap-3">
+                        <div id="live-status-symbol" class="w-3.5 h-3.5 rounded-full bg-red-500 flex-shrink-0 shadow-sm" title="Disconnected"></div>
+                        <div>
+                            <h3 class="font-bold text-blue-900 dark:text-blue-200 text-sm mb-1">📡 Cloud Sync Status</h3>
+                            <p id="live-file-status" class="text-xs text-blue-700 dark:text-blue-300 font-mono">Initializing Firebase connection...</p>
+                        </div>
+                    </div>
+                    <div id="live-file-action-container" class="flex gap-2">
+                        <button onclick="initFirebaseSync()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow transition-colors text-xs whitespace-nowrap">
+                            🔄 Force Sync Now
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bg-slate-50 dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700 space-y-3">
+                    <h3 class="font-bold text-slate-900 dark:text-white text-base">🔑 Firebase Configuration</h3>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">Update your Firebase project credentials in <code>script.js</code> to point to your live cloud instance.</p>
+                    <div class="bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-700 font-mono text-[11px] text-slate-700 dark:text-slate-300 space-y-1">
+                        <div>const firebaseConfig = {</div>
+                        <div class="pl-4">apiKey: "YOUR_API_KEY",</div>
+                        <div class="pl-4">authDomain: "YOUR_PROJECT.firebaseapp.com",</div>
+                        <div class="pl-4">projectId: "YOUR_PROJECT_ID",</div>
+                        <div class="pl-4">storageBucket: "YOUR_PROJECT.appspot.com",</div>
+                        <div class="pl-4">messagingSenderId: "YOUR_SENDER_ID",</div>
+                        <div class="pl-4">appId: "YOUR_APP_ID"</div>
+                        <div>};</div>
+                    </div>
+                </div>
+
+                <div class="bg-slate-50 dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
+                        <div>
+                            <h3 class="font-bold text-slate-900 dark:text-white text-base">🎛️ Distance Preset Customizer & Tuning Hub</h3>
+                            <p class="text-xs text-slate-500 dark:text-slate-400">Configure default coefficient weights applied when clicking the Sprint or Distance Preset buttons.</p>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button onclick="resetPresetCustomizationsToDefault()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold py-1.5 px-3 rounded shadow transition-colors text-xs whitespace-nowrap">🔄 Reset Defaults</button>
+                            <button onclick="savePresetCustomizations()" class="bg-green-600 hover:bg-green-700 text-white font-bold py-1.5 px-3 rounded shadow transition-colors text-xs whitespace-nowrap">💾 Save Preset Settings</button>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                        <div class="bg-white dark:bg-slate-900 p-4 rounded border border-slate-200 dark:border-slate-700 space-y-2">
+                            <h4 class="font-bold text-sky-700 dark:text-sky-300 uppercase tracking-wider mb-2">⚡ Sprint Preset (~275m - 400m)</h4>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div><label class="block font-semibold">WinDiv:</label><input type="number" id="preset-sprint-windiv" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">BestTime:</label><input type="number" id="preset-sprint-besttime" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">AvgTime:</label><input type="number" id="preset-sprint-avgtime" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">Best 1Sec:</label><input type="number" id="preset-sprint-best1sec" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">Avg 1Sec:</label><input type="number" id="preset-sprint-avg1sec" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">EarlyPos:</label><input type="number" id="preset-sprint-earlypos" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">ClosingGain:</label><input type="number" id="preset-sprint-closinggain" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">BoxBias:</label><input type="number" id="preset-sprint-boxbias" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                            </div>
+                        </div>
+
+                        <div class="bg-white dark:bg-slate-900 p-4 rounded border border-slate-200 dark:border-slate-700 space-y-2">
+                            <h4 class="font-bold text-purple-700 dark:text-purple-300 uppercase tracking-wider mb-2">🏆 Distance Preset (600m+)</h4>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div><label class="block font-semibold">WinDiv:</label><input type="number" id="preset-dist-windiv" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">BestTime:</label><input type="number" id="preset-dist-besttime" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">AvgTime:</label><input type="number" id="preset-dist-avgtime" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">Best 1Sec:</label><input type="number" id="preset-dist-best1sec" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">Avg 1Sec:</label><input type="number" id="preset-dist-avg1sec" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">EarlyPos:</label><input type="number" id="preset-dist-earlypos" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">ClosingGain:</label><input type="number" id="preset-dist-closinggain" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                                <div><label class="block font-semibold">BoxBias:</label><input type="number" id="preset-dist-boxbias" step="0.1" class="w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-mono"/></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-slate-50 dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="font-bold text-slate-900 dark:text-white text-base">📊 Storage Health & Quota</h3>
+                        <span id="storage-usage-badge" class="text-xs font-mono bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded font-bold">Calculating...</span>
+                    </div>
+                    <p id="storage-details-text" class="text-xs text-slate-600 dark:text-slate-300 mb-3">Monitoring storage consumption against browser storage quota limits.</p>
+                    <div class="w-full bg-slate-200 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden mb-3">
+                        <div id="storage-progress-bar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-end">
+                        <button onclick="refreshStorageEstimate()" class="bg-slate-700 dark:bg-slate-800 hover:bg-slate-600 text-white text-xs font-bold py-1.5 px-3 rounded shadow transition-colors">🔄 Refresh Storage Estimate</button>
+                    </div>
+                </div>
+
+                <div class="bg-slate-50 dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <h3 class="font-bold text-slate-900 dark:text-white text-base mb-2">🧹 Database Maintenance & Selective Purge</h3>
+                    <p class="text-xs text-slate-600 dark:text-slate-300 mb-4">Clean up old history, reset custom model weights, or clear the prediction cache without losing your master dataset.</p>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <button onclick="purgeOldMeetings()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold py-2 px-3 rounded shadow transition-colors text-xs text-left flex flex-col justify-between">
+                            <span class="font-bold mb-1">⏳ Purge Old Meetings</span>
+                            <span class="text-[10px] text-slate-300 font-normal">Remove races older than 30 days</span>
+                        </button>
+                        <button onclick="resetDefaultWeights()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold py-2 px-3 rounded shadow transition-colors text-xs text-left flex flex-col justify-between">
+                            <span class="font-bold mb-1">🎛️ Reset Model Weights</span>
+                            <span class="text-[10px] text-slate-300 font-normal">Revert custom slider weights to baseline</span>
+                        </button>
+                        <button onclick="clearPredictionCache()" class="bg-slate-700 hover:bg-slate-800 text-white font-bold py-2 px-3 rounded shadow transition-colors text-xs text-left flex flex-col justify-between">
+                            <span class="font-bold mb-1">⚡ Clear Prediction Cache</span>
+                            <span class="text-[10px] text-slate-300 font-normal">Force-clear computed analysis cache</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div class="bg-slate-50 dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col justify-between">
+                        <div>
+                            <h3 class="font-bold text-slate-900 dark:text-white text-base mb-1">📤 Export Manual Snapshot</h3>
+                            <p class="text-xs text-slate-600 dark:text-slate-300 mb-4">
+                                Download a backup copy of your meetings, dog stats, and saved history to your computer.
+                            </p>
+                        </div>
+                        <button onclick="exportDatabaseSnapshot()" class="w-full bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 text-white font-bold py-2.5 px-4 rounded shadow transition-colors text-xs whitespace-nowrap">
+                            💾 Download Snapshot (.json)
+                        </button>
+                    </div>
+
+                    <div class="bg-slate-50 dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col justify-between">
+                        <div>
+                            <h3 class="font-bold text-slate-900 dark:text-white text-base mb-1">📥 Import Manual Snapshot</h3>
+                            <p class="text-xs text-slate-600 dark:text-slate-300 mb-4">
+                                Select an existing backup <code>.json</code> snapshot file to instantly restore all data into the application.
+                            </p>
+                        </div>
+                        <input type="file" id="importSnapshotFileInput" accept=".json" onchange="importDatabaseSnapshot(event)" class="hidden"/>
+                        <button onclick="document.getElementById('importSnapshotFileInput').click()" class="w-full bg-slate-700 hover:bg-slate-800 text-white font-bold py-2.5 px-4 rounded shadow transition-colors text-xs whitespace-nowrap">
+                            📂 Upload & Restore Snapshot
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bg-slate-50 dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <h3 class="font-bold text-slate-900 dark:text-white text-base mb-3">🔍 Diagnostics & System Environment Inspector</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-mono">
+                        <div class="bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-700">
+                            <span class="block text-slate-400 font-bold uppercase tracking-wider mb-1">Browser & Engine</span>
+                            <span id="diag-browser" class="text-slate-800 dark:text-slate-200 font-semibold">Detecting...</span>
+                        </div>
+                        <div class="bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-700">
+                            <span class="block text-slate-400 font-bold uppercase tracking-wider mb-1">Storage Mode</span>
+                            <span id="diag-storage" class="text-slate-800 dark:text-slate-200 font-semibold">Firebase Cloud Firestore</span>
+                        </div>
+                        <div class="bg-white dark:bg-slate-900 p-3 rounded border border-slate-200 dark:border-slate-700">
+                            <span class="block text-slate-400 font-bold uppercase tracking-wider mb-1">Audit Log (Last Backup)</span>
+                            <span id="diag-audit" class="text-slate-800 dark:text-slate-200 font-semibold">No backup exported yet</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 7: Enhanced App Info & Methodology Handbook -->
+            <div id="app-info" class="tab-content bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-xl shadow-sm flex-grow overflow-auto space-y-8 transition-colors duration-200">
+                <div class="border-b border-slate-200 dark:border-slate-800 pb-6">
+                    <div class="inline-block px-3 py-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-full text-xs font-bold uppercase tracking-wider mb-3">Comprehensive Architecture & Handbook Guide</div>
+                    <h2 class="text-3xl font-black text-slate-900 dark:text-white tracking-tight">gBet Greyhound Race Predictor</h2>
+                    <p class="text-slate-600 dark:text-slate-300 mt-2 text-sm sm:text-base leading-relaxed">
+                        An advanced quantitative handicapping and race analysis platform designed to automate multi-variable modeling, live cloud database persistence, and complete Return on Investment (ROI) tracking.
+                    </p>
+                </div>
+
+                <div class="space-y-4">
+                    <h3 class="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                        <span class="p-1.5 bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 rounded-lg text-sm">🧭</span>
+                        Navigation, Quick-Jump & Interactive Overlays
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                        <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-2">
+                            <div class="font-bold text-slate-800 dark:text-slate-200 text-sm">⚡ Quick-Jump Ribbon</div>
+                            <p class="text-slate-600 dark:text-slate-300">Accordion-style vertical sidebar grouping meetings by track and date for rapid navigation.</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-2">
+                            <div class="font-bold text-slate-800 dark:text-slate-200 text-sm">☁️ Firebase Cloud Status</div>
+                            <p class="text-slate-600 dark:text-slate-300">Real-time indicators showing active connection and synchronization with your Firestore cloud backend.</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-2">
+                            <div class="font-bold text-slate-800 dark:text-slate-200 text-sm">🎟 Modals & Overlays</div>
+                            <p class="text-slate-600 dark:text-slate-300">Pop-up sheets allowing deep review of historical predictions and weight configurations.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-4">
+                    <h3 class="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                        <span class="p-1.5 bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 rounded-lg text-sm">🗂️</span>
+                        Functional Tabs & Workflow Modules
+                    </h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+                        <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-1.5">
+                            <strong class="text-slate-900 dark:text-white text-sm block">📁 Race Details Tab</strong>
+                            <p class="text-slate-600 dark:text-slate-300">Import official race info via <code>.txt</code> files or TABtouch clipboard tools.</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-1.5">
+                            <strong class="text-slate-900 dark:text-white text-sm block">📊 Dog Statistics Tab</strong>
+                            <p class="text-slate-600 dark:text-slate-300">Performance repository supporting CSV bulk imports and manual run entries.</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-1.5">
+                            <strong class="text-slate-900 dark:text-white text-sm block">⚡ Meeting Summary</strong>
+                            <p class="text-slate-600 dark:text-slate-300">Concise batch overview card grid displaying top picks and confidence ratings.</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-1.5">
+                            <strong class="text-slate-900 dark:text-white text-sm block">📈 Predictions & Analysis</strong>
+                            <p class="text-slate-600 dark:text-slate-300">Dynamic handicapping hub with weight customizers and Softmax probability meters.</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-1.5">
+                            <strong class="text-slate-900 dark:text-white text-sm block">🎯 Saved Predictions & ROI</strong>
+                            <p class="text-slate-600 dark:text-slate-300">Automated win/place strike rates and financial ROI performance tracking.</p>
+                        </div>
+                        <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-1.5">
+                            <strong class="text-slate-900 dark:text-white text-sm block">⚙️ Settings & Cloud Hub</strong>
+                            <p class="text-slate-600 dark:text-slate-300">Firebase configuration, cloud sync controls, storage estimation, and maintenance.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>   
+
+        <!-- Saved Prediction Details Modal -->
+        <div id="saved-details-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 opacity-0 transition-opacity duration-300">
+            <div class="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" onclick="closeSavedPredictionDetails()"></div>
+            
+            <div class="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200 dark:border-slate-700 transform scale-95 transition-transform duration-300" id="saved-details-modal-content">
+                <div class="flex justify-between items-start p-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/80">
+                    <div>
+                        <h3 id="modal-race-title" class="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Race Title</h3>
+                        <div class="flex flex-wrap items-center gap-3 mt-1.5 text-xs font-mono text-slate-500 dark:text-slate-400">
+                            <span id="modal-race-meta-time" class="bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded font-bold text-slate-700 dark:text-slate-300">Timestamp</span>
+                            <span id="modal-race-meta-winner">Actual Winner: Pending</span>
+                        </div>
+                    </div>
+                    <button onclick="closeSavedPredictionDetails()" title="Close Window" class="p-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 rounded-lg text-slate-700 dark:text-slate-300 transition-colors focus:outline-none focus:ring-2 focus:ring-slate-400">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                
+                <div class="p-5 overflow-y-auto flex-grow bg-slate-100 dark:bg-slate-950">
+                    <h4 class="text-base font-bold mb-4 text-slate-900 dark:text-white tracking-tight">Archived Runner Analysis & Computed Metrics</h4>
+                    <ul id="modal-runner-analysis-list" class="space-y-3 text-slate-700 dark:text-slate-300">
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <script src="script.js"></script>
+</body>
+</html>
