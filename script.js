@@ -13,92 +13,31 @@ window.customPresets = {
 window.expandedRibbonGroups = new Set();
 window.sessionImportCount = 0;
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Firebase Web App</title>
-</head>
-<body>
-
-    <h1>My Cloud-Synced App</h1>
-    <button id="saveBtn">Save Data to Cloud</button>
-    <div id="status"></div>
-
-    <!-- Your App Logic -->
-    <script type="module">
-      // 1. Import Firebase functions from the official CDN
-      import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
-      import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
-
-      // 2. Paste your config object from Step 2 here
-     const firebaseConfig = {
-      apiKey: "AIzaSyCSAGUB-R2gvtVadkG3YnJ65lsYfPtyzhU",
-      authDomain: "gbets-db.firebaseapp.com",
-      projectId: "gbets-db",
-      storageBucket: "gbets-db.firebasestorage.app",
-      messagingSenderId: "87741949675",
-      appId: "1:87741949675:web:b6d5f35c5d9e92729400ae",
-      measurementId: "G-682N2EM4QF"
-    };
-
-      // 3. Initialize Firebase & Firestore
-      const app = initializeApp(firebaseConfig);
-      const db = getFirestore(app);
-
-      // --- FUNCTION TO LOAD DATA ---
-      async function loadAppData() {
-        try {
-          // We'll store our app data inside a document called 'mainDoc' 
-          // inside a collection called 'appData'
-          const docRef = doc(db, "appData", "mainDoc");
-          const docSnap = await getDoc(docRef);
-
-          if (docSnap.exists()) {
-            console.log("Cloud Data Loaded:", docSnap.data());
-            document.getElementById('status').innerText = "Data loaded successfully!";
-          } else {
-            console.log("No data found yet. Save some first!");
-          }
-        } catch (error) {
-          console.error("Error loading data:", error);
-        }
-      }
-
-      // --- FUNCTION TO SAVE DATA ---
-      async function saveAppData() {
-        try {
-          const sampleDataObject = {
-            lastUpdated: new Date().toISOString(),
-            userSettings: { theme: "dark" },
-            items: [1, 2, 3, 4, 5] // This replaces your old data.json contents!
-          };
-
-          await setDoc(doc(db, "appData", "mainDoc"), sampleDataObject);
-          document.getElementById('status').innerText = "Successfully saved to Firebase!";
-          alert("Saved to cloud!");
-        } catch (error) {
-          console.error("Error saving data:", error);
-        }
-      }
-
-      // Attach save to button click
-      document.getElementById('saveBtn').addEventListener('click', saveAppData);
-
-      // Run load when the page opens
-      loadAppData();
-    </script>
-</body>
-</html>
+// Firebase Configuration & Initialization (Modular SDK v13.0.0 Firestore)
+const firebaseConfig = {
+    apiKey: "AIzaSyCSAGUB-R2gvtVadkG3YnJ65lsYfPtyzhU",
+    authDomain: "gbets-db.firebaseapp.com",
+    projectId: "gbets-db",
+    storageBucket: "gbets-db.firebasestorage.app",
+    messagingSenderId: "87741949675",
+    appId: "1:87741949675:web:b6d5f35c5d9e92729400ae",
+    measurementId: "G-682N2EM4QF"
+};
 
 let app, dbCloud;
 try {
-    if (!firebase.apps.length) {
-        app = firebase.initializeApp(firebaseConfig);
-    } else {
-        app = firebase.app();
-    }
-    dbCloud = firebase.firestore();
+    import("https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js").then(async ({ initializeApp }) => {
+        const { getFirestore, doc, getDoc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js");
+        
+        app = initializeApp(firebaseConfig);
+        dbCloud = getFirestore(app);
+        
+        // Trigger initial sync after modular SDK initialization
+        await initFirebaseSync();
+    }).catch(err => {
+        console.warn("Firebase modular SDK load warning:", err);
+        setLiveStatusSymbol('disconnected');
+    });
 } catch (err) {
     console.warn("Firebase initialization warning:", err);
 }
@@ -133,7 +72,13 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
 
         populatePresetSettingsUI();
-        await initFirebaseSync();
+        
+        // Give a short window for modular SDK async load, or fallback if dbCloud is ready
+        setTimeout(async () => {
+            if (dbCloud) {
+                await initFirebaseSync();
+            }
+        }, 300);
 
         runDiagnosticsInspector();
         refreshStorageEstimate();
@@ -155,10 +100,11 @@ async function initFirebaseSync() {
         document.getElementById('header-live-file-status').innerText = "Connecting...";
         setLiveStatusSymbol('prompt');
 
-        const docRef = dbCloud.collection("gbet_database").doc("master_session");
-        const docSnap = await docRef.get();
+        const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js");
+        const docRef = doc(dbCloud, "gbet_database", "master_session");
+        const docSnap = await getDoc(docRef);
 
-        if (docSnap.exists) {
+        if (docSnap.exists()) {
             let parsed = docSnap.data();
             if (parsed.meetings) window.allRaceMeetings = parsed.meetings;
             if (parsed.stats) window.dogStats = parsed.stats;
@@ -453,6 +399,7 @@ async function sortAndPersistMeetingsObject() {
 
     if (dbCloud) {
         try {
+            const { doc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js");
             const snapshotPayload = {
                 meetings: window.allRaceMeetings,
                 activeKey: window.activeRaceKey,
@@ -460,9 +407,9 @@ async function sortAndPersistMeetingsObject() {
                 cache: window.computedPredictionsCache,
                 savedPredictions: window.savedPredictions,
                 customPresets: window.customPresets,
-                lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
+                lastUpdated: serverTimestamp()
             };
-            await dbCloud.collection("gbet_database").doc("master_session").set(snapshotPayload);
+            await setDoc(doc(dbCloud, "gbet_database", "master_session"), snapshotPayload);
             setLiveStatusSymbol('connected');
         } catch (err) {
             console.error("Firebase cloud sync write error:", err);

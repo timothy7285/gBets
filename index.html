@@ -5,9 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>gBet Greyhound Race Predictor</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase SDK Scripts -->
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -720,6 +717,25 @@
 
     </main>
 
-    <script src="script.js"></script>
+    <!-- Firebase SDK Modular Scripts Integration -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-analytics.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCSAGUB-R2gvtVadkG3YnJ65lsYfPtyzhU",
+            authDomain: "gbets-db.firebaseapp.com",
+            projectId: "gbets-db",
+            storageBucket: "gbets-db.firebasestorage.app",
+            messagingSenderId: "87741949675",
+            appId: "1:87741949675:web:b6d5f35c5d9e92729400ae",
+            measurementId: "G-682N2EM4QF"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
+    </script>
+
+    <script type="module" src="script.js"></script>
 </body>
 </html>
