@@ -65,12 +65,15 @@ window.allRaceMeetings = {};
         }
 
         window.addEventListener('DOMContentLoaded', async () => {
-            try {
-                const savedTheme = localStorage.getItem('gbet_theme');
-                if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-                    document.getElementById('html-root').classList.add('dark');
-                    document.getElementById('theme-icon').innerText = '☀️';
-                }
+            // Inside window.addEventListener('DOMContentLoaded', async () => { ... })
+				try {
+					if (window.db && window.firebaseTools) {
+						const { doc, getDoc } = window.firebaseTools; // Make sure getDoc is imported in index.html module script too!
+						// Alternatively, use collection/getDocs if reading documents via query
+					}
+				} catch (err) {
+					console.warn("Firebase load fallback:", err);
+				}
 
                 let storedMeetings = null;
                 let storedActiveKey = null;
@@ -594,33 +597,54 @@ window.allRaceMeetings = {};
         }
 
         async function sortAndPersistMeetingsObject() {
-            let sortedKeys = getSortedRaceKeys();
-            let sortedMeetings = {};
-            sortedKeys.forEach(k => {
-                sortedMeetings[k] = window.allRaceMeetings[k];
+    let sortedKeys = getSortedRaceKeys();
+    let sortedMeetings = {};
+    sortedKeys.forEach(k => {
+        sortedMeetings[k] = window.allRaceMeetings[k];
+    });
+    window.allRaceMeetings = sortedMeetings;
+
+    const snapshotPayload = {
+        meetings: window.allRaceMeetings,
+        activeKey: window.activeRaceKey,
+        stats: window.dogStats,
+        cache: window.computedPredictionsCache,
+        savedPredictions: window.savedPredictions,
+        customPresets: window.customPresets,
+        exportDate: new Date().toISOString()
+    };
+
+    // --- SYNC TO FIREBASE FIRESTORE ---
+    try {
+        if (window.db && window.firebaseTools) {
+            const { doc, setDoc } = window.firebaseTools;
+            await setDoc(doc(window.db, "gbets", "masterState"), snapshotPayload);
+            setLiveStatusSymbol('connected');
+        }
+    } catch (err) {
+        console.warn("Firebase sync warning:", err);
+        setLiveStatusSymbol('disconnected');
+    }
+
+    // Keep Dexie/IndexedDB local backup active as fallback
+    try {
+        if (db && window.isIndexedDBAvailable) {
+            await db.transaction('rw', db.sessions, async () => {
+                await db.sessions.put({ key: 'gbet_session_meetings', value: window.allRaceMeetings });
+                await db.sessions.put({ key: 'gbet_session_active_key', value: window.activeRaceKey });
+                await db.sessions.put({ key: 'gbet_session_stats', value: window.dogStats });
+                await db.sessions.put({ key: 'gbet_computed_cache', value: window.computedPredictionsCache });
+                await db.sessions.put({ key: 'gbet_session_saved_predictions', value: window.savedPredictions });
+                await db.sessions.put({ key: 'gbet_session_custom_presets', value: window.customPresets });
             });
-            window.allRaceMeetings = sortedMeetings;
+        }
+    } catch (err) {
+        console.warn("Storage persistence fallback error:", err);
+    }
 
-            try {
-                if (db && window.isIndexedDBAvailable) {
-                    await db.transaction('rw', db.sessions, async () => {
-                        await db.sessions.put({ key: 'gbet_session_meetings', value: window.allRaceMeetings });
-                        await db.sessions.put({ key: 'gbet_session_active_key', value: window.activeRaceKey });
-                        await db.sessions.put({ key: 'gbet_session_stats', value: window.dogStats });
-                        await db.sessions.put({ key: 'gbet_computed_cache', value: window.computedPredictionsCache });
-                        await db.sessions.put({ key: 'gbet_session_saved_predictions', value: window.savedPredictions });
-                        await db.sessions.put({ key: 'gbet_session_custom_presets', value: window.customPresets });
-                        if (window.cachedFileHandleReference) {
-                            await db.sessions.put({ key: 'gbet_live_file_handle', value: window.cachedFileHandleReference });
-                        }
-                    });
-                }
-            } catch (err) {
-                console.warn("Storage persistence fallback error:", err);
-            }
-
-            await writeToLiveFileIfConnected();
-            refreshStorageEstimate();
+    await writeToLiveFileIfConnected();
+    refreshStorageEstimate();
+}
         }
 
         function updateAllUIComponents() {
