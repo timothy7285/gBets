@@ -3138,23 +3138,31 @@ function showSavedPredictionDetails(index) {
 
     let analysisHtml = '';
     
-    if (item.weights) {
+if (item.weights) {
         let w = item.weights;
-        let isSprint = true, isDistance = true;
+        let isBaseline = true;
+        let isSprint = true;
+        let isDistance = true;
+
+        // Default baseline weights
+        let defaultBaseline = { windiv: 0.4, besttime: 0.5, avgtime: 0.6, best1sec: 0.5, avg1sec: 0.5, earlypos: 0.4, closinggain: 0.4, boxbias: 0.5 };
         let keys = ['windiv', 'besttime', 'avgtime', 'best1sec', 'avg1sec', 'earlypos', 'closinggain', 'boxbias'];
         
         keys.forEach(k => {
+            if (w[k] !== defaultBaseline[k]) isBaseline = false;
             if (window.customPresets.sprint[k] !== w[k]) isSprint = false;
             if (window.customPresets.distance[k] !== w[k]) isDistance = false;
         });
 
         let badgeHtml = '';
-        if (isSprint) {
+        if (isBaseline) {
+            badgeHtml = '<span class="bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-600 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚖️ Baseline Default</span>';
+        } else if (isSprint) {
             badgeHtml = '<span class="bg-sky-100 text-sky-800 border border-sky-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚡ Sprint Preset</span>';
         } else if (isDistance) {
             badgeHtml = '<span class="bg-purple-100 text-purple-800 border border-purple-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">🏆 Distance Preset</span>';
         } else {
-            badgeHtml = '<span class="bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-600 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚙️ Custom</span>';
+            badgeHtml = '<span class="bg-amber-100 text-amber-800 border border-amber-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚙️ Custom</span>';
         }
 
         analysisHtml += `
