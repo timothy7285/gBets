@@ -13,29 +13,83 @@ window.customPresets = {
 window.expandedRibbonGroups = new Set();
 window.sessionImportCount = 0;
 
-<script type="module">
-  // Import the functions you need from the SDKs you need
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
-  import { getAnalytics } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-analytics.js";
-  // TODO: Add SDKs for Firebase products that you want to use
-  // https://firebase.google.com/docs/web/setup#available-libraries
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Firebase Web App</title>
+</head>
+<body>
 
-  // Your web app's Firebase configuration
-  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
-  const firebaseConfig = {
-    apiKey: "AIzaSyCSAGUB-R2gvtVadkG3YnJ65lsYfPtyzhU",
-    authDomain: "gbets-db.firebaseapp.com",
-    projectId: "gbets-db",
-    storageBucket: "gbets-db.firebasestorage.app",
-    messagingSenderId: "87741949675",
-    appId: "1:87741949675:web:b6d5f35c5d9e92729400ae",
-    measurementId: "G-682N2EM4QF"
-  };
+    <h1>My Cloud-Synced App</h1>
+    <button id="saveBtn">Save Data to Cloud</button>
+    <div id="status"></div>
 
-  // Initialize Firebase
-  const app = initializeApp(firebaseConfig);
-  const analytics = getAnalytics(app);
-</script>
+    <!-- Your App Logic -->
+    <script type="module">
+      // 1. Import Firebase functions from the official CDN
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
+      import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
+
+      // 2. Paste your config object from Step 2 here
+     const firebaseConfig = {
+      apiKey: "AIzaSyCSAGUB-R2gvtVadkG3YnJ65lsYfPtyzhU",
+      authDomain: "gbets-db.firebaseapp.com",
+      projectId: "gbets-db",
+      storageBucket: "gbets-db.firebasestorage.app",
+      messagingSenderId: "87741949675",
+      appId: "1:87741949675:web:b6d5f35c5d9e92729400ae",
+      measurementId: "G-682N2EM4QF"
+    };
+
+      // 3. Initialize Firebase & Firestore
+      const app = initializeApp(firebaseConfig);
+      const db = getFirestore(app);
+
+      // --- FUNCTION TO LOAD DATA ---
+      async function loadAppData() {
+        try {
+          // We'll store our app data inside a document called 'mainDoc' 
+          // inside a collection called 'appData'
+          const docRef = doc(db, "appData", "mainDoc");
+          const docSnap = await getDoc(docRef);
+
+          if (docSnap.exists()) {
+            console.log("Cloud Data Loaded:", docSnap.data());
+            document.getElementById('status').innerText = "Data loaded successfully!";
+          } else {
+            console.log("No data found yet. Save some first!");
+          }
+        } catch (error) {
+          console.error("Error loading data:", error);
+        }
+      }
+
+      // --- FUNCTION TO SAVE DATA ---
+      async function saveAppData() {
+        try {
+          const sampleDataObject = {
+            lastUpdated: new Date().toISOString(),
+            userSettings: { theme: "dark" },
+            items: [1, 2, 3, 4, 5] // This replaces your old data.json contents!
+          };
+
+          await setDoc(doc(db, "appData", "mainDoc"), sampleDataObject);
+          document.getElementById('status').innerText = "Successfully saved to Firebase!";
+          alert("Saved to cloud!");
+        } catch (error) {
+          console.error("Error saving data:", error);
+        }
+      }
+
+      // Attach save to button click
+      document.getElementById('saveBtn').addEventListener('click', saveAppData);
+
+      // Run load when the page opens
+      loadAppData();
+    </script>
+</body>
+</html>
 
 let app, dbCloud;
 try {
