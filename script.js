@@ -13,16 +13,29 @@ window.customPresets = {
 window.expandedRibbonGroups = new Set();
 window.sessionImportCount = 0;
 
-// Firebase Configuration & Initialization
-const firebaseConfig = {
-  apiKey: "AIzaSyCSAGUB-R2gvtVadkG3YnJ65lsYfPtyzhU",
-  authDomain: "gbets-db.firebaseapp.com",
-  projectId: "gbets-db",
-  storageBucket: "gbets-db.firebasestorage.app",
-  messagingSenderId: "87741949675",
-  appId: "1:87741949675:web:b6d5f35c5d9e92729400ae",
-  measurementId: "G-682N2EM4QF"
-};
+<script type="module">
+  // Import the functions you need from the SDKs you need
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
+  import { getAnalytics } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-analytics.js";
+  // TODO: Add SDKs for Firebase products that you want to use
+  // https://firebase.google.com/docs/web/setup#available-libraries
+
+  // Your web app's Firebase configuration
+  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+  const firebaseConfig = {
+    apiKey: "AIzaSyCSAGUB-R2gvtVadkG3YnJ65lsYfPtyzhU",
+    authDomain: "gbets-db.firebaseapp.com",
+    projectId: "gbets-db",
+    storageBucket: "gbets-db.firebasestorage.app",
+    messagingSenderId: "87741949675",
+    appId: "1:87741949675:web:b6d5f35c5d9e92729400ae",
+    measurementId: "G-682N2EM4QF"
+  };
+
+  // Initialize Firebase
+  const app = initializeApp(firebaseConfig);
+  const analytics = getAnalytics(app);
+</script>
 
 let app, dbCloud;
 try {
