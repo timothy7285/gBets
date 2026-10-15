@@ -798,5 +798,30 @@
     </main>
 
     <script src="script.js"></script>
+    <script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
+  import { getAnalytics } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-analytics.js";
+  import { getFirestore, doc, setDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyCSAGUB-R2gvtVadkG3YnJ65lsYfPtyzhU",
+    authDomain: "gbets-db.firebaseapp.com",
+    projectId: "gbets-db",
+    storageBucket: "gbets-db.firebasestorage.app",
+    messagingSenderId: "87741949675",
+    appId: "1:87741949675:web:b6d5f35c5d9e92729400ae",
+    measurementId: "G-682N2EM4QF"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const analytics = getAnalytics(app);
+  const db = getFirestore(app);
+
+  // --- EXPOSE TO WINDOW SO YOUR APP & CONSOLE CAN USE THEM ---
+  window.db = db;
+  window.firebaseTools = { doc, setDoc, collection, getDocs };
+
+  console.log("Firebase initialized and globally exposed!");
+</script>
 </body>
 </html>
