@@ -3138,44 +3138,52 @@ function showSavedPredictionDetails(index) {
 
     let analysisHtml = '';
     
-    if (item.weights) {
-        let w = item.weights;
-        let isSprint = true, isDistance = true;
-        let keys = ['windiv', 'besttime', 'avgtime', 'best1sec', 'avg1sec', 'earlypos', 'closinggain', 'boxbias'];
-        
-        keys.forEach(k => {
-            if (window.customPresets.sprint[k] !== w[k]) isSprint = false;
-            if (window.customPresets.distance[k] !== w[k]) isDistance = false;
-        });
+	if (item.weights) {
+			let w = item.weights;
+			let isBaseline = true;
+			let isSprint = true;
+			let isDistance = true;
 
-        let badgeHtml = '';
-        if (isSprint) {
-            badgeHtml = '<span class="bg-sky-100 text-sky-800 border border-sky-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚡ Sprint Preset</span>';
-        } else if (isDistance) {
-            badgeHtml = '<span class="bg-purple-100 text-purple-800 border border-purple-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">🏆 Distance Preset</span>';
-        } else {
-            badgeHtml = '<span class="bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-600 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚙️ Custom</span>';
-        }
+			// Default baseline weights
+			let defaultBaseline = { windiv: 0.4, besttime: 0.5, avgtime: 0.6, best1sec: 0.5, avg1sec: 0.5, earlypos: 0.4, closinggain: 0.4, boxbias: 0.5 };
+			let keys = ['windiv', 'besttime', 'avgtime', 'best1sec', 'avg1sec', 'earlypos', 'closinggain', 'boxbias'];
+			
+			keys.forEach(k => {
+				if (w[k] !== defaultBaseline[k]) isBaseline = false;
+				if (window.customPresets.sprint[k] !== w[k]) isSprint = false;
+				if (window.customPresets.distance[k] !== w[k]) isDistance = false;
+			});
 
-        analysisHtml += `
-            <li class="mb-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-4 rounded-lg shadow-sm block">
-                <div class="flex justify-between items-center mb-3">
-                    <span class="text-sm font-black text-slate-800 dark:text-white tracking-tight">Model Weights Configuration</span>
-                    ${badgeHtml}
-                </div>
-                <div class="grid grid-cols-4 sm:grid-cols-8 gap-2 text-[10px] font-mono text-center">
-                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">WinDiv</span><strong class="text-slate-900 dark:text-slate-100">${w.windiv}</strong></div>
-                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">BestTime</span><strong class="text-slate-900 dark:text-slate-100">${w.besttime}</strong></div>
-                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">AvgTime</span><strong class="text-slate-900 dark:text-slate-100">${w.avgtime}</strong></div>
-                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">Best1Sec</span><strong class="text-slate-900 dark:text-slate-100">${w.best1sec}</strong></div>
-                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">Avg1Sec</span><strong class="text-slate-900 dark:text-slate-100">${w.avg1sec}</strong></div>
-                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">EarlyPos</span><strong class="text-slate-900 dark:text-slate-100">${w.earlypos}</strong></div>
-                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">CloseGain</span><strong class="text-slate-900 dark:text-slate-100">${w.closinggain}</strong></div>
-                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">BoxBias</span><strong class="text-slate-900 dark:text-slate-100">${w.boxbias}</strong></div>
-                </div>
-            </li>
-        `;
-    }
+			let badgeHtml = '';
+			if (isBaseline) {
+				badgeHtml = '<span class="bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-600 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚖️ Baseline Default</span>';
+			} else if (isSprint) {
+				badgeHtml = '<span class="bg-sky-100 text-sky-800 border border-sky-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚡ Sprint Preset</span>';
+			} else if (isDistance) {
+				badgeHtml = '<span class="bg-purple-100 text-purple-800 border border-purple-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">🏆 Distance Preset</span>';
+			} else {
+				badgeHtml = '<span class="bg-amber-100 text-amber-800 border border-amber-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚙️ Custom</span>';
+			}
+
+			analysisHtml += `
+				<li class="mb-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-4 rounded-lg shadow-sm block">
+					<div class="flex justify-between items-center mb-3">
+						<span class="text-sm font-black text-slate-800 dark:text-white tracking-tight">Model Weights Configuration</span>
+						${badgeHtml}
+					</div>
+					<div class="grid grid-cols-4 sm:grid-cols-8 gap-2 text-[10px] font-mono text-center">
+						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">WinDiv</span><strong class="text-slate-900 dark:text-slate-100">${w.windiv}</strong></div>
+						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">BestTime</span><strong class="text-slate-900 dark:text-slate-100">${w.besttime}</strong></div>
+						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">AvgTime</span><strong class="text-slate-900 dark:text-slate-100">${w.avgtime}</strong></div>
+						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">Best1Sec</span><strong class="text-slate-900 dark:text-slate-100">${w.best1sec}</strong></div>
+						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">Avg1Sec</span><strong class="text-slate-900 dark:text-slate-100">${w.avg1sec}</strong></div>
+						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">EarlyPos</span><strong class="text-slate-900 dark:text-slate-100">${w.earlypos}</strong></div>
+						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">CloseGain</span><strong class="text-slate-900 dark:text-slate-100">${w.closinggain}</strong></div>
+						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">BoxBias</span><strong class="text-slate-900 dark:text-slate-100">${w.boxbias}</strong></div>
+					</div>
+				</li>
+			`;
+		}
 
     let scoredDogs = item.scoredDogs || [];
     let scratchedDogs = item.scratchedDogs || [];
