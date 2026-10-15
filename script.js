@@ -15,12 +15,13 @@ window.sessionImportCount = 0;
 
 // Firebase Configuration & Initialization
 const firebaseConfig = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_PROJECT.firebaseapp.com",
-    projectId: "YOUR_PROJECT_ID",
-    storageBucket: "YOUR_PROJECT.appspot.com",
-    messagingSenderId: "YOUR_SENDER_ID",
-    appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyCSAGUB-R2gvtVadkG3YnJ65lsYfPtyzhU",
+  authDomain: "gbets-db.firebaseapp.com",
+  projectId: "gbets-db",
+  storageBucket: "gbets-db.firebasestorage.app",
+  messagingSenderId: "87741949675",
+  appId: "1:87741949675:web:b6d5f35c5d9e92729400ae",
+  measurementId: "G-682N2EM4QF"
 };
 
 let app, dbCloud;
