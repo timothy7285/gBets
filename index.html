@@ -653,27 +653,29 @@
     </div>
 
     <script src="script.js"></script>
-    <script type="module">
-      import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
-      import { getAnalytics } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-analytics.js";
-      import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
+<!-- Inside your module script tag in index.html -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
+  import { getAnalytics } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-analytics.js";
+  import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, getDocs } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
 
-      const firebaseConfig = {
-        apiKey: "AIzaSyCSAGUB-R2gvtVadkG3YnJ65lsYfPtyzhU",
-        authDomain: "gbets-db.firebaseapp.com",
-        projectId: "gbets-db",
-        storageBucket: "gbets-db.firebasestorage.app",
-        messagingSenderId: "87741949675",
-        appId: "1:87741949675:web:b6d5f35c5d9e92729400ae",
-        measurementId: "G-682N2EM4QF"
-      };
+  const firebaseConfig = {
+    apiKey: "AIzaSyCSAGUB-R2gvtVadkG3YnJ65lsYfPtyzhU",
+    authDomain: "gbets-db.firebaseapp.com",
+    projectId: "gbets-db",
+    storageBucket: "gbets-db.firebasestorage.app",
+    messagingSenderId: "87741949675",
+    appId: "1:87741949675:web:b6d5f35c5d9e92729400ae",
+    measurementId: "G-682N2EM4QF"
+  };
 
-      const app = initializeApp(firebaseConfig);
-      const analytics = getAnalytics(app);
-      const db = getFirestore(app);
+  const app = initializeApp(firebaseConfig);
+  const analytics = getAnalytics(app);
+  const db = getFirestore(app);
 
-      window.db = db;
-      window.firebaseTools = { doc, setDoc, getDoc, collection, getDocs };
-    </script>
+  window.db = db;
+  // Added onSnapshot to firebaseTools
+  window.firebaseTools = { doc, setDoc, getDoc, onSnapshot, collection, getDocs };
+</script>
 </body>
 </html>
