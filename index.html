@@ -656,7 +656,7 @@
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
       import { getAnalytics } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-analytics.js";
-      import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, getDocs } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
+      import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
     
       const firebaseConfig = {
         apiKey: "AIzaSyCSAGUB-R2gvtVadkG3YnJ65lsYfPtyzhU",
@@ -674,7 +674,7 @@
     
       window.db = db;
       // Added onSnapshot to firebaseTools
-      window.firebaseTools = { doc, setDoc, getDoc, onSnapshot, collection, getDocs };
+      window.firebaseTools = { doc, setDoc, getDoc, collection, getDocs };
     </script>
 </body>
 </html>
