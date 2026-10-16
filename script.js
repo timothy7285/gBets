@@ -81,53 +81,29 @@ window.addEventListener('DOMContentLoaded', async () => {
         let storedHandle = null;
 
         // --- TRY LOADING FROM FIREBASE FIRESTORE FIRST ---
-// --- REPLACE THE FIREBASE LOADING BLOCK IN script.js WITH THIS: ---
-let loadedFromFirebase = false;
-try {
-    if (window.db && window.firebaseTools) {
-        const { doc, onSnapshot } = window.firebaseTools;
-        
-        // Establish real-time listener subscription
-        onSnapshot(doc(window.db, "gbets", "masterState"), async (docSnap) => {
-            if (docSnap.exists()) {
-                // Skip processing if the update was generated locally to avoid sync loops
-                if (docSnap.metadata.hasPendingWrites) return;
-
-                const parsed = docSnap.data();
-                if (parsed.meetings) window.allRaceMeetings = parsed.meetings;
-                if (parsed.activeKey) window.activeRaceKey = parsed.activeKey;
-                if (parsed.stats) window.dogStats = parsed.stats;
-                if (parsed.cache) window.computedPredictionsCache = parsed.cache;
-                if (parsed.savedPredictions) window.savedPredictions = parsed.savedPredictions;
-                if (parsed.customPresets) window.customPresets = parsed.customPresets;
-
-                populatePresetSettingsUI();
-                await sortAndPersistMeetingsObject(true); // true can flag silent save
-                updateAllUIComponents();
-                
-                if (window.dogStats.length > 0) {
-                    renderStatsTable();
-                    document.getElementById('csvFileLabel').innerText = `${window.dogStats.length} stats records loaded`;
+        let loadedFromFirebase = false;
+        try {
+            if (window.db && window.firebaseTools) {
+                const { doc, getDoc } = window.firebaseTools;
+                const docSnap = await getDoc(doc(window.db, "gbets", "masterState"));
+                if (docSnap.exists()) {
+                    const parsed = docSnap.data();
+                    if (parsed.meetings) storedMeetings = parsed.meetings;
+                    if (parsed.activeKey) storedActiveKey = parsed.activeKey;
+                    if (parsed.stats) storedStats = parsed.stats;
+                    if (parsed.cache) storedCache = parsed.cache;
+                    if (parsed.savedPredictions) storedSavedPredictions = parsed.savedPredictions;
+                    if (parsed.customPresets) storedCustomPresets = parsed.customPresets;
+                    loadedFromFirebase = true;
+                    console.log("State successfully loaded from Firebase Cloud Firestore!");
+                    setLiveStatusSymbol('connected');
+                    document.getElementById('live-file-status').innerText = "Connected & Cloud-Syncing with Firebase Firestore";
+                    document.getElementById('header-live-file-status').innerText = "Cloud: Firebase Active";
                 }
-                if (Object.keys(window.allRaceMeetings).length > 0) {
-                    document.getElementById('txtFileLabel').innerText = `${Object.keys(window.allRaceMeetings).length} file(s) loaded`;
-                }
-
-                setLiveStatusSymbol('connected');
-                document.getElementById('live-file-status').innerText = "Connected & Real-Time Syncing (Firebase Firestore)";
-                document.getElementById('header-live-file-status').innerText = "Cloud: Live Firebase";
             }
-        }, (fbErr) => {
-            console.warn("Firebase snapshot listener error:", fbErr);
-            setLiveStatusSymbol('disconnected');
-        });
-
-        loadedFromFirebase = true;
-        console.log("Real-time Firebase Firestore listener initialized!");
-    }
-} catch (fbErr) {
-    console.warn("Firebase snapshot setup failed, falling back to local storage:", fbErr);
-}
+        } catch (fbErr) {
+            console.warn("Firebase load failed, falling back to local storage:", fbErr);
+        }
 
         // Fallback to IndexedDB if Firebase didn't load anything
         if (!loadedFromFirebase) {
