@@ -621,7 +621,7 @@ async function importDatabaseSnapshot(event) {
     reader.readAsText(file);
 }
 
-// --- UPDATED PERSISTENCE FUNCTION SYNCING TO FIREBASE FIRESTORE ---
+// --- PERSISTENCE FUNCTION SYNCING TO FIREBASE FIRESTORE ---
 async function sortAndPersistMeetingsObject() {
     let sortedKeys = getSortedRaceKeys();
     let sortedMeetings = {};
@@ -1057,31 +1057,28 @@ async function checkAutoFillPostRaceResults() {
                 let scoredDogsList = savedItem.scoredDogs || [];
                 let topPick = scoredDogsList.length > 0 ? scoredDogsList[0] : null;
                 let activeCompetitorsCount = scoredDogsList.length;
+                let payoutTier = savedItem.manualPayoutTier || (activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only"));
                 
                 if (topPick) {
                     let topPickName = topPick.name || "";
                     if (meeting.actualWinner.toUpperCase() === topPickName.toUpperCase()) {
                         savedItem.actualWinPayout = topPick.winDiv > 0 ? topPick.winDiv : 2.0;
+                    } else {
+                        savedItem.actualWinPayout = 0;
+                    }
+
+                    let podium = [meeting.actualPlace1, meeting.actualPlace2, meeting.actualPlace3].map(n => (n || "").toUpperCase());
+                    let eligiblePlaceHit = false;
+                    if (payoutTier === "1,2,3") {
+                        eligiblePlaceHit = podium.slice(0, 3).includes(topPickName.toUpperCase());
+                    } else if (payoutTier === "2") {
+                        eligiblePlaceHit = podium.slice(0, 2).includes(topPickName.toUpperCase());
+                    }
+
+                    if (eligiblePlaceHit) {
                         savedItem.actualPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
                     } else {
-                        let podium = [meeting.actualPlace1, meeting.actualPlace2, meeting.actualPlace3].map(n => (n || "").toUpperCase());
-                        let eligiblePlaceHit = false;
-                        
-                        if (activeCompetitorsCount >= 8) {
-                            eligiblePlaceHit = podium.slice(0, 3).includes(topPickName.toUpperCase());
-                        } else if (activeCompetitorsCount >= 5) {
-                            eligiblePlaceHit = podium.slice(0, 2).includes(topPickName.toUpperCase());
-                        } else {
-                            eligiblePlaceHit = podium.slice(0, 1).includes(topPickName.toUpperCase());
-                        }
-
-                        if (eligiblePlaceHit) {
-                            savedItem.actualWinPayout = 0;
-                            savedItem.actualPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
-                        } else {
-                            savedItem.actualWinPayout = 0;
-                            savedItem.actualPlacePayout = 0;
-                        }
+                        savedItem.actualPlacePayout = 0;
                     }
                 }
                 updated = true;
@@ -1120,6 +1117,15 @@ function getRacePillStatus(key) {
     if (isSettled) return 'settled';
     if (window.computedPredictionsCache[key]) return 'computed';
     return 'neutral';
+}
+
+function isRaceSaved(raceObj, key) {
+    return window.savedPredictions.some(item => {
+        let trackMatch = (item.trackName || "").toUpperCase().includes(raceObj.trackName.toUpperCase()) || raceObj.trackName.toUpperCase().includes((item.trackName || "").toUpperCase());
+        let raceNumMatch = String(item.raceNumber || "") === String(raceObj.raceNumber || "") || new RegExp(`\\bRACE\\s*${raceObj.raceNumber}\\b`, 'i').test(item.trackName || "");
+        let dateMatch = (!item.raceDate || !raceObj.raceDate) ? true : item.raceDate === raceObj.raceDate;
+        return trackMatch && raceNumMatch && dateMatch;
+    });
 }
 
 function updateRaceSelector() {
@@ -1172,15 +1178,42 @@ function updateRaceSelector() {
             let groupContainer = document.createElement('div');
             groupContainer.className = "flex flex-col mb-1.5";
             
+            let headerWrapper = document.createElement('div');
+            headerWrapper.className = "flex items-center w-full px-2 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 border border-transparent hover:border-slate-200 dark:hover:border-slate-700";
+            
+            let deleteGroupBtn = document.createElement('button');
+            deleteGroupBtn.className = "text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 mr-1.5 transition-colors flex-shrink-0 text-xs";
+            deleteGroupBtn.title = `Delete all races for ${group.trackName} on ${group.raceDate}`;
+            deleteGroupBtn.innerHTML = "🗑️";
+            deleteGroupBtn.onclick = async (e) => {
+                e.stopPropagation();
+                if (confirm(`Are you sure you want to delete all meetings for ${group.trackName} (${group.raceDate})?`)) {
+                    group.keys.forEach(k => {
+                        delete window.allRaceMeetings[k];
+                        if (window.computedPredictionsCache[k]) delete window.computedPredictionsCache[k];
+                    });
+                    if (group.keys.includes(window.activeRaceKey)) {
+                        let remainingKeys = getSortedRaceKeys();
+                        window.activeRaceKey = remainingKeys.length > 0 ? remainingKeys[0] : "";
+                    }
+                    await sortAndPersistMeetingsObject();
+                    updateAllUIComponents();
+                    showNotification(`Successfully deleted all meetings for ${group.trackName} (${group.raceDate}).`, "success");
+                }
+            };
+
             let headerBtn = document.createElement('button');
-            headerBtn.className = "flex justify-between items-center w-full text-left px-2 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 border border-transparent hover:border-slate-200 dark:hover:border-slate-700 focus:outline-none";
+            headerBtn.className = "flex-grow flex justify-between items-center text-left focus:outline-none pl-0.5 truncate";
             
             let chevronClass = isExpanded ? "rotate-180" : "";
             headerBtn.innerHTML = `
                 <span class="truncate">${group.trackName} <span class="font-normal text-slate-400 mx-0.5">•</span> <span class="text-[10px]">${group.raceDate}</span></span>
                 <svg id="${safeGroupId}-icon" class="w-3.5 h-3.5 text-slate-400 transition-transform duration-200 flex-shrink-0 ${chevronClass}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path></svg>
             `;
-            
+
+            headerWrapper.appendChild(deleteGroupBtn);
+            headerWrapper.appendChild(headerBtn);
+
             let contentDiv = document.createElement('div');
             contentDiv.id = safeGroupId;
             contentDiv.className = `pl-1.5 ml-1.5 border-l-2 border-slate-200 dark:border-slate-700 mt-1.5 gap-1 flex-col ${isExpanded ? 'flex' : 'hidden'}`;
@@ -1200,7 +1233,7 @@ function updateRaceSelector() {
                 }
             };
 
-            groupContainer.appendChild(headerBtn);
+            groupContainer.appendChild(headerWrapper);
 
             group.keys.forEach(k => {
                 let raceObj = window.allRaceMeetings[k];
@@ -1215,23 +1248,48 @@ function updateRaceSelector() {
 
                 let statusIndicator = '<span class="text-slate-400 dark:text-slate-500 font-normal">⚪</span>';
                 if (statusType === 'settled') {
-                    statusIndicator = '<span class="text-blue-600 dark:text-blue-400 font-bold">🎯</span>';
+                    statusIndicator = '<span class="text-blue-600 dark:text-blue-400 font-bold" title="Settled">🎯</span>';
                 } else if (statusType === 'computed') {
-                    statusIndicator = '<span class="text-green-500 dark:text-green-400 font-bold">🟢</span>';
+                    statusIndicator = '<span class="text-green-500 dark:text-green-400 font-bold" title="Computed">🟢</span>';
                 }
+
+                let savedBadgeIcon = isRaceSaved(raceObj, k) ? '<span class="text-purple-600 dark:text-purple-400 font-bold ml-1" title="Saved to Predictions History">💾</span>' : '';
                 
-                let pillBtn = document.createElement('button');
-                pillBtn.className = `w-full text-left px-2 py-1.5 rounded text-[11px] font-bold transition-colors flex items-center justify-between border ${
+                let pillWrapper = document.createElement('div');
+                pillWrapper.className = `w-full rounded text-[11px] font-bold transition-colors flex items-center justify-between border ${
                     isCurrent 
                     ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-sm' 
                     : 'bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
-                }`;
-                pillBtn.innerHTML = `<span class="truncate pr-1">Race ${raceObj.raceNumber || '?'} ${raceObj.raceDistance ? '[' + raceObj.raceDistance + ']' : ''}</span> <span class="flex-shrink-0">${statusIndicator}</span>`;
-                pillBtn.title = k;
-                pillBtn.onclick = function() {
-                    switchActiveRace(k);
+                } px-2 py-1.5`;
+
+                let deleteRaceBtn = document.createElement('button');
+                deleteRaceBtn.className = `flex-shrink-0 p-0.5 mr-1.5 rounded transition-colors text-xs ${isCurrent ? 'text-slate-300 hover:text-white dark:text-slate-600 dark:hover:text-slate-900' : 'text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400'}`;
+                deleteRaceBtn.title = `Delete ${k}`;
+                deleteRaceBtn.innerHTML = "🗑️";
+                deleteRaceBtn.onclick = async (e) => {
+                    e.stopPropagation();
+                    if (confirm(`Are you sure you want to delete ${k}?`)) {
+                        delete window.allRaceMeetings[k];
+                        if (window.computedPredictionsCache[k]) delete window.computedPredictionsCache[k];
+                        if (window.activeRaceKey === k) {
+                            let remainingKeys = getSortedRaceKeys();
+                            window.activeRaceKey = remainingKeys.length > 0 ? remainingKeys[0] : "";
+                        }
+                        await sortAndPersistMeetingsObject();
+                        updateAllUIComponents();
+                        showNotification(`Successfully deleted ${k}.`, "success");
+                    }
                 };
-                contentDiv.appendChild(pillBtn);
+
+                let pillBtn = document.createElement('button');
+                pillBtn.className = "flex-grow text-left flex items-center justify-between truncate pr-1 focus:outline-none";
+                pillBtn.innerHTML = `<span class="truncate pr-1">Race ${raceObj.raceNumber || '?'} ${raceObj.raceDistance ? '[' + raceObj.raceDistance + ']' : ''}</span> <span class="flex-shrink-0 flex items-center">${savedBadgeIcon}${statusIndicator}</span>`;
+                pillBtn.title = k;
+                pillBtn.onclick = () => switchActiveRace(k);
+
+                pillWrapper.appendChild(deleteRaceBtn);
+                pillWrapper.appendChild(pillBtn);
+                contentDiv.appendChild(pillWrapper);
             });
 
             groupContainer.appendChild(contentDiv);
@@ -1349,7 +1407,55 @@ function renderActiveRace() {
     });
 }
 
+function populateBatchFilterDropdowns() {
+    let trackSelect = document.getElementById('filter-batch-track-select');
+    let dateSelect = document.getElementById('filter-batch-date-select');
+    if (!trackSelect || !dateSelect) return;
+
+    let currentTrackVal = trackSelect.value;
+    let currentDateVal = dateSelect.value;
+
+    let tracks = new Set();
+    let dates = new Set();
+
+    Object.keys(window.allRaceMeetings).forEach(k => {
+        let race = window.allRaceMeetings[k];
+        let t = (race.trackName || "UNKNOWN").toUpperCase();
+        let d = race.raceDate || "No Date";
+        if (t) tracks.add(t);
+        if (d && d !== "No Date") dates.add(d);
+    });
+
+    trackSelect.innerHTML = `<option value="">All Tracks</option>`;
+    Array.from(tracks).sort().forEach(t => {
+        let opt = document.createElement('option');
+        opt.value = t;
+        opt.innerText = t;
+        if (t === currentTrackVal) opt.selected = true;
+        trackSelect.appendChild(opt);
+    });
+
+    dateSelect.innerHTML = `<option value="">All Dates</option>`;
+    Array.from(dates).sort().reverse().forEach(d => {
+        let opt = document.createElement('option');
+        opt.value = d;
+        opt.innerText = d;
+        if (d === currentDateVal) opt.selected = true;
+        dateSelect.appendChild(opt);
+    });
+}
+
+function resetBatchFilters() {
+    let trackSelect = document.getElementById('filter-batch-track-select');
+    let dateSelect = document.getElementById('filter-batch-date-select');
+    if (trackSelect) trackSelect.value = "";
+    if (dateSelect) dateSelect.value = "";
+    renderBatchSummaryDashboard();
+}
+
 function renderBatchSummaryDashboard() {
+    populateBatchFilterDropdowns();
+    
     const gridContainer = document.getElementById('batch-cards-grid');
     let sortedKeys = getSortedRaceKeys();
 
@@ -1358,8 +1464,30 @@ function renderBatchSummaryDashboard() {
         return;
     }
 
+    let selectedTrack = document.getElementById('filter-batch-track-select') ? document.getElementById('filter-batch-track-select').value.toUpperCase().trim() : "";
+    let selectedDate = document.getElementById('filter-batch-date-select') ? document.getElementById('filter-batch-date-select').value.toUpperCase().trim() : "";
+
+    let filteredKeys = sortedKeys.filter(key => {
+        let race = window.allRaceMeetings[key];
+        let trackName = (race.trackName || "").toUpperCase();
+        let raceDate = (race.raceDate || "").toUpperCase();
+
+        if (selectedTrack && !trackName.includes(selectedTrack)) {
+            return false;
+        }
+        if (selectedDate && !raceDate.includes(selectedDate)) {
+            return false;
+        }
+        return true;
+    });
+
+    if (filteredKeys.length === 0) {
+        gridContainer.innerHTML = `<div class="col-span-full p-8 text-center text-slate-400 italic">No race meetings match your selected filters.</div>`;
+        return;
+    }
+
     gridContainer.innerHTML = '';
-    sortedKeys.forEach(key => {
+    filteredKeys.forEach(key => {
         let race = window.allRaceMeetings[key];
         let topPick = "Pending Stats";
         let confidence = "-";
@@ -2256,21 +2384,16 @@ async function refreshPredictions(showNotif = true) {
         let defaultPlacePayout = 0;
         if (activeRace.actualWinner && activeRace.actualWinner.toUpperCase() === topPick.name.toUpperCase()) {
             defaultWinPayout = topPick.winDiv > 0 ? topPick.winDiv : 2.0;
-            defaultPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
-        } else {
-            let podium = [activeRace.actualPlace1, activeRace.actualPlace2, activeRace.actualPlace3].map(n => (n || "").toUpperCase());
             let activeCompetitorsCount = scoredDogs.length;
+            let payoutTier = activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only");
+            let podium = [activeRace.actualPlace1, activeRace.actualPlace2, activeRace.actualPlace3].map(n => (n || "").toUpperCase());
             let eligiblePlaceHit = false;
-            if (activeCompetitorsCount >= 8) {
+            if (payoutTier === "1,2,3") {
                 eligiblePlaceHit = podium.slice(0, 3).includes(topPick.name.toUpperCase());
-            } else if (activeCompetitorsCount >= 5) {
+            } else if (payoutTier === "2") {
                 eligiblePlaceHit = podium.slice(0, 2).includes(topPick.name.toUpperCase());
-            } else {
-                eligiblePlaceHit = podium.slice(0, 1).includes(topPick.name.toUpperCase());
             }
-
             if (eligiblePlaceHit) {
-                defaultWinPayout = 0;
                 defaultPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
             }
         }
@@ -2450,30 +2573,28 @@ async function saveCurrentPredictions() {
         let scoredDogsList = window.currentComputedResult.scoredDogs || [];
         let topPick = scoredDogsList.length > 0 ? scoredDogsList[0] : null;
         let activeCompetitorsCount = scoredDogsList.length;
+        let payoutTier = window.currentComputedResult.manualPayoutTier || (activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only"));
 
         if (topPick) {
             let topPickName = topPick.name || "";
             if (meeting.actualWinner && meeting.actualWinner.toUpperCase() === topPickName.toUpperCase()) {
                 window.currentComputedResult.actualWinPayout = topPick.winDiv > 0 ? topPick.winDiv : 2.0;
+            } else {
+                window.currentComputedResult.actualWinPayout = 0;
+            }
+
+            let podium = [meeting.actualPlace1, meeting.actualPlace2, meeting.actualPlace3].map(n => (n || "").toUpperCase());
+            let eligiblePlaceHit = false;
+            if (payoutTier === "1,2,3") {
+                eligiblePlaceHit = podium.slice(0, 3).includes(topPickName.toUpperCase());
+            } else if (payoutTier === "2") {
+                eligiblePlaceHit = podium.slice(0, 2).includes(topPickName.toUpperCase());
+            }
+
+            if (eligiblePlaceHit) {
                 window.currentComputedResult.actualPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
             } else {
-                let podium = [meeting.actualPlace1, meeting.actualPlace2, meeting.actualPlace3].map(n => (n || "").toUpperCase());
-                let eligiblePlaceHit = false;
-                if (activeCompetitorsCount >= 8) {
-                    eligiblePlaceHit = podium.slice(0, 3).includes(topPickName.toUpperCase());
-                } else if (activeCompetitorsCount >= 5) {
-                    eligiblePlaceHit = podium.slice(0, 2).includes(topPickName.toUpperCase());
-                } else {
-                    eligiblePlaceHit = podium.slice(0, 1).includes(topPickName.toUpperCase());
-                }
-
-                if (eligiblePlaceHit) {
-                    window.currentComputedResult.actualWinPayout = 0;
-                    window.currentComputedResult.actualPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
-                } else {
-                    window.currentComputedResult.actualWinPayout = 0;
-                    window.currentComputedResult.actualPlacePayout = 0;
-                }
+                window.currentComputedResult.actualPlacePayout = 0;
             }
         }
     }
@@ -2505,6 +2626,7 @@ async function saveCurrentPredictions() {
             window.currentComputedResult.actualPlace3 = existingItem.actualPlace3;
             window.currentComputedResult.actualWinPayout = existingItem.actualWinPayout;
             window.currentComputedResult.actualPlacePayout = existingItem.actualPlacePayout;
+            window.currentComputedResult.manualPayoutTier = existingItem.manualPayoutTier;
         }
         window.savedPredictions[existingIndex] = window.currentComputedResult;
     } else {
@@ -2523,37 +2645,36 @@ async function updateActualWinner(index, winnerName) {
         window.savedPredictions[index].actualWinner = winnerName;
         window.savedPredictions[index].actualPlace1 = winnerName;
         
-        let scoredDogsList = window.savedPredictions[index].scoredDogs || [];
+        let item = window.savedPredictions[index];
+        let scoredDogsList = item.scoredDogs || [];
         let topPick = scoredDogsList.length > 0 ? scoredDogsList[0] : null;
         let activeCompetitorsCount = scoredDogsList.length;
+        let payoutTier = item.manualPayoutTier || (activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only"));
 
         if (topPick && winnerName) {
             let topPickName = topPick.name || "";
             if (winnerName.toUpperCase() === topPickName.toUpperCase()) {
-                window.savedPredictions[index].actualWinPayout = topPick.winDiv > 0 ? topPick.winDiv : 2.0;
-                window.savedPredictions[index].actualPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
+                item.actualWinPayout = topPick.winDiv > 0 ? topPick.winDiv : 2.0;
             } else {
-                let podium = [window.savedPredictions[index].actualPlace1, window.savedPredictions[index].actualPlace2, window.savedPredictions[index].actualPlace3].map(n => (n || "").toUpperCase());
-                let eligiblePlaceHit = false;
-                if (activeCompetitorsCount >= 8) {
-                    eligiblePlaceHit = podium.slice(0, 3).includes(topPickName.toUpperCase());
-                } else if (activeCompetitorsCount >= 5) {
-                    eligiblePlaceHit = podium.slice(0, 2).includes(topPickName.toUpperCase());
-                } else {
-                    eligiblePlaceHit = podium.slice(0, 1).includes(topPickName.toUpperCase());
-                }
+                item.actualWinPayout = 0;
+            }
 
-                if (eligiblePlaceHit) {
-                    window.savedPredictions[index].actualWinPayout = 0;
-                    window.savedPredictions[index].actualPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
-                } else {
-                    window.savedPredictions[index].actualWinPayout = 0;
-                    window.savedPredictions[index].actualPlacePayout = 0;
-                }
+            let podium = [item.actualPlace1, item.actualPlace2, item.actualPlace3].map(n => (n || "").toUpperCase());
+            let eligiblePlaceHit = false;
+            if (payoutTier === "1,2,3") {
+                eligiblePlaceHit = podium.slice(0, 3).includes(topPickName.toUpperCase());
+            } else if (payoutTier === "2") {
+                eligiblePlaceHit = podium.slice(0, 2).includes(topPickName.toUpperCase());
+            }
+
+            if (eligiblePlaceHit) {
+                item.actualPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
+            } else {
+                item.actualPlacePayout = 0;
             }
         } else {
-            window.savedPredictions[index].actualWinPayout = 0;
-            window.savedPredictions[index].actualPlacePayout = 0;
+            item.actualWinPayout = 0;
+            item.actualPlacePayout = 0;
         }
 
         await sortAndPersistMeetingsObject();
@@ -2564,17 +2685,67 @@ async function updateActualWinner(index, winnerName) {
 
 async function updateActualPlace2(index, dogName) {
     if (window.savedPredictions[index]) {
-        window.savedPredictions[index].actualPlace2 = dogName;
+        let item = window.savedPredictions[index];
+        item.actualPlace2 = dogName;
+        
+        let scoredDogsList = item.scoredDogs || [];
+        let topPick = scoredDogsList.length > 0 ? scoredDogsList[0] : null;
+        let activeCompetitorsCount = scoredDogsList.length;
+        let payoutTier = item.manualPayoutTier || (activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only"));
+
+        if (topPick && item.actualWinner) {
+            let topPickName = topPick.name || "";
+            let podium = [item.actualPlace1, item.actualPlace2, item.actualPlace3].map(n => (n || "").toUpperCase());
+            let eligiblePlaceHit = false;
+            if (payoutTier === "1,2,3") {
+                eligiblePlaceHit = podium.slice(0, 3).includes(topPickName.toUpperCase());
+            } else if (payoutTier === "2") {
+                eligiblePlaceHit = podium.slice(0, 2).includes(topPickName.toUpperCase());
+            }
+
+            if (eligiblePlaceHit) {
+                item.actualPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
+            } else {
+                item.actualPlacePayout = 0;
+            }
+        }
+
         await sortAndPersistMeetingsObject();
         renderSavedPredictions();
+        updateAllUIComponents();
     }
 }
 
 async function updateActualPlace3(index, dogName) {
     if (window.savedPredictions[index]) {
-        window.savedPredictions[index].actualPlace3 = dogName;
+        let item = window.savedPredictions[index];
+        item.actualPlace3 = dogName;
+        
+        let scoredDogsList = item.scoredDogs || [];
+        let topPick = scoredDogsList.length > 0 ? scoredDogsList[0] : null;
+        let activeCompetitorsCount = scoredDogsList.length;
+        let payoutTier = item.manualPayoutTier || (activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only"));
+
+        if (topPick && item.actualWinner) {
+            let topPickName = topPick.name || "";
+            let podium = [item.actualPlace1, item.actualPlace2, item.actualPlace3].map(n => (n || "").toUpperCase());
+            let eligiblePlaceHit = false;
+            if (payoutTier === "1,2,3") {
+                eligiblePlaceHit = podium.slice(0, 3).includes(topPickName.toUpperCase());
+            } else if (payoutTier === "2") {
+                eligiblePlaceHit = podium.slice(0, 2).includes(topPickName.toUpperCase());
+            }
+
+            if (eligiblePlaceHit) {
+                item.actualPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
+            } else {
+                item.actualPlacePayout = 0;
+            }
+        }
+
         await sortAndPersistMeetingsObject();
         renderSavedPredictions();
+        updateAllUIComponents();
     }
 }
 
@@ -2583,6 +2754,7 @@ async function updateWinPayout(index, val) {
         window.savedPredictions[index].actualWinPayout = parseFloat(val) || 0;
         await sortAndPersistMeetingsObject();
         renderSavedPredictions();
+        updateAllUIComponents();
     }
 }
 
@@ -2591,6 +2763,40 @@ async function updatePlacePayout(index, val) {
         window.savedPredictions[index].actualPlacePayout = parseFloat(val) || 0;
         await sortAndPersistMeetingsObject();
         renderSavedPredictions();
+        updateAllUIComponents();
+    }
+}
+
+async function updatePayoutTier(index, tierVal) {
+    if (window.savedPredictions[index]) {
+        let item = window.savedPredictions[index];
+        item.manualPayoutTier = tierVal;
+        
+        let scoredDogsList = item.scoredDogs || [];
+        let topPick = scoredDogsList.length > 0 ? scoredDogsList[0] : null;
+        let podium = [item.actualPlace1, item.actualPlace2, item.actualPlace3].map(n => (n || "").toUpperCase());
+        
+        let isPlaceHit = false;
+        if (item.actualWinner && topPick) {
+            let topPickName = topPick.name || "";
+            if (tierVal === "1,2,3") {
+                isPlaceHit = podium.slice(0, 3).includes(topPickName.toUpperCase());
+            } else if (tierVal === "2") {
+                isPlaceHit = podium.slice(0, 2).includes(topPickName.toUpperCase());
+            } else {
+                isPlaceHit = false;
+            }
+
+            if (isPlaceHit) {
+                item.actualPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
+            } else {
+                item.actualPlacePayout = 0;
+            }
+        }
+
+        await sortAndPersistMeetingsObject();
+        renderSavedPredictions();
+        updateAllUIComponents();
     }
 }
 
@@ -2705,7 +2911,31 @@ function renderSavedPredictions() {
         return true;
     });
 
-    updatePerformanceMetrics(filteredList);
+    filteredList.sort((a, b) => {
+        let dateA = extractDateFromSaved(a);
+        let dateB = extractDateFromSaved(b);
+        let dateCompare = dateB.localeCompare(dateA);
+        if (dateCompare !== 0) return dateCompare;
+
+        let trackA = extractTrackNameFromSaved(a);
+        let trackB = extractTrackNameFromSaved(b);
+        let trackCompare = trackB.localeCompare(trackA);
+        if (trackCompare !== 0) return trackCompare;
+
+        let raceNumA = parseInt(a.raceNumber) || 0;
+        let raceNumB = parseInt(b.raceNumber) || 0;
+        if (raceNumA === 0) {
+            let matchA = (a.trackName || "").match(/RACE\s*(\d+)/i);
+            if (matchA) raceNumA = parseInt(matchA[1]) || 0;
+        }
+        if (raceNumB === 0) {
+            let matchB = (b.trackName || "").match(/RACE\s*(\d+)/i);
+            if (matchB) raceNumB = parseInt(matchB[1]) || 0;
+        }
+        return raceNumB - raceNumA;
+    });
+	
+	updatePerformanceMetrics(filteredList);
 
     if (filteredList.length === 0) {
         container.innerHTML = `<p class="text-slate-400 italic">No saved predictions match your selected filters.</p>`;
@@ -2723,25 +2953,52 @@ function renderSavedPredictions() {
         let displayTitle = `${trackName}${!trackName.includes(raceDistance) ? distPart : ''}`;
         
         let topPickName = scoredDogsList.length > 0 ? (scoredDogsList[0].name || "") : "";
+        let secondPickName = scoredDogsList.length > 1 ? (scoredDogsList[1].name || "") : "";
+        let thirdPickName = scoredDogsList.length > 2 ? (scoredDogsList[2].name || "") : "";
+
         let isWinSettled = item.actualWinner && item.actualWinner.trim() !== "";
         let isWinHit = isWinSettled && item.actualWinner.toUpperCase() === topPickName.toUpperCase();
         
         let isPlaceSettled = isWinSettled;
         let podiumFinishingList = [item.actualPlace1, item.actualPlace2, item.actualPlace3].map(n => (n || "").toUpperCase());
         let activeCompetitorsCount = scoredDogsList.length;
+        
+        let defaultPayoutTier = activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only");
+        let payoutTier = item.manualPayoutTier || defaultPayoutTier;
         let isPlaceHit = false;
 
         if (isPlaceSettled && topPickName) {
-            if (activeCompetitorsCount >= 8) {
+            if (payoutTier === "1,2,3") {
                 isPlaceHit = podiumFinishingList.slice(0, 3).includes(topPickName.toUpperCase());
-            } else if (activeCompetitorsCount >= 5) {
+            } else if (payoutTier === "2") {
                 isPlaceHit = podiumFinishingList.slice(0, 2).includes(topPickName.toUpperCase());
             } else {
-                isPlaceHit = podiumFinishingList.slice(0, 1).includes(topPickName.toUpperCase());
+                isPlaceHit = false;
             }
         }
 
-        let lossBadgeHTML = (!isPlaceHit && !isWinHit && isWinSettled) ? '<span class="bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-200 border border-red-300 dark:border-red-700 text-xs px-2 py-0.5 rounded font-bold">Loss</span>' : '';
+        // Exacta Check: Top 2 picks match actual 1st and 2nd place finishers (in any order / boxed)
+        let isExactSettled = isWinSettled && item.actualPlace2 && item.actualPlace2.trim() !== "";
+        let isExactHit = false;
+        if (isExactSettled && topPickName && secondPickName) {
+            let actualTopTwo = [item.actualPlace1, item.actualPlace2].map(n => (n || "").toUpperCase());
+            let predictedTopTwo = [topPickName.toUpperCase(), secondPickName.toUpperCase()];
+            isExactHit = actualTopTwo.length === 2 && actualTopTwo.every(dog => predictedTopTwo.includes(dog));
+        }
+
+        // Trifecta Check: Top 3 picks match actual 1st, 2nd, and 3rd place finishers (in any order / boxed)
+        let isTrifectaSettled = isExactSettled && item.actualPlace3 && item.actualPlace3.trim() !== "";
+        let isTrifectaHit = false;
+        if (isTrifectaSettled && topPickName && secondPickName && thirdPickName) {
+            let actualTopThree = [item.actualPlace1, item.actualPlace2, item.actualPlace3].map(n => (n || "").toUpperCase());
+            let predictedTopThree = [topPickName.toUpperCase(), secondPickName.toUpperCase(), thirdPickName.toUpperCase()];
+            isTrifectaHit = actualTopThree.length === 3 && actualTopThree.every(dog => predictedTopThree.includes(dog));
+        }
+
+        // Amber/Orange Distinct Styling for Payout Tier Badge
+        let tierBadgeClass = "bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 font-bold";
+
+        let lossBadgeHTML = (!isPlaceHit && !isWinHit && !isExactHit && !isTrifectaHit && isWinSettled) ? '<span class="bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-200 border border-red-300 dark:border-red-700 text-xs px-2 py-0.5 rounded font-bold">Loss</span>' : '';
 
         html += `
             <div class="bg-white dark:bg-slate-900 p-5 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm saved-item-card">
@@ -2751,12 +3008,19 @@ function renderSavedPredictions() {
                             <span>${displayTitle}</span> 
                             <svg class="w-5 h-5 text-slate-400 hover:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
                         </button>
-                        <span class="text-xs text-slate-400 font-mono mt-1 block">${item.timestamp || ''}</span>
+                        <span class="text-xs text-slate-400 font-mono mt-1 block">${item.timestamp || ''} (${activeCompetitorsCount} runners)</span>
                     </div>
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <select onchange="updatePayoutTier(${actualIndex}, this.value)" class="text-xs px-2.5 py-1 rounded ${tierBadgeClass} focus:outline-none cursor-pointer shadow-sm" title="Change Payout Tier">
+                            <option value="Pay Win Only" ${payoutTier === 'Pay Win Only' ? 'selected' : ''}>Pay Win Only</option>
+                            <option value="2" ${payoutTier === '2' ? 'selected' : ''}>Pay 1,2</option>
+                            <option value="1,2,3" ${payoutTier === '1,2,3' ? 'selected' : ''}>Pay 1,2,3</option>
+                        </select>
                         ${!isWinSettled ? '<span class="bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-200 border border-yellow-200 dark:border-yellow-700 text-xs px-2 py-0.5 rounded font-bold">Pending</span>' : ''}
                         ${isWinHit ? '<span class="bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200 border border-green-300 dark:border-green-700 text-xs px-2 py-0.5 rounded font-bold">Win</span>' : ''}
-                        ${isPlaceHit ? '<span class="bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 border border-blue-300 dark:border-blue-700 text-xs px-2 py-0.5 rounded font-bold">Place</span>' : ''}
+                        ${isPlaceHit && payoutTier !== 'Pay Win Only' ? '<span class="bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 border border-blue-300 dark:border-blue-700 text-xs px-2 py-0.5 rounded font-bold">Place</span>' : ''}
+                        ${isExactHit ? '<span class="bg-indigo-100 dark:bg-indigo-900/40 text-indigo-800 dark:text-indigo-200 border border-indigo-300 dark:border-indigo-700 text-xs px-2 py-0.5 rounded font-bold">Exac</span>' : ''}
+                        ${isTrifectaHit ? '<span class="bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-700 text-xs px-2 py-0.5 rounded font-bold">Tri</span>' : ''}
                         ${lossBadgeHTML}
                         <button onclick="deleteSavedPrediction(${actualIndex})" class="text-xs text-red-600 hover:text-red-800 font-bold px-2 py-1 rounded border border-red-200 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors">Delete</button>
                     </div>
@@ -2853,14 +3117,15 @@ function updatePerformanceMetrics(savedList) {
         let topPick = scoredDogsList.length > 0 ? (scoredDogsList[0].name || "") : "";
         let podium = [item.actualPlace1, item.actualPlace2, item.actualPlace3].map(n => (n || "").toUpperCase());
         let activeCount = scoredDogsList.length;
-        if (!topPick) return false;
-        if (activeCount >= 8) {
+        let payoutTier = item.manualPayoutTier || (activeCount >= 8 ? "1,2,3" : (activeCount >= 5 ? "2" : "Pay Win Only"));
+
+        if (!topPick || payoutTier === "Pay Win Only") return false;
+        if (payoutTier === "1,2,3") {
             return podium.slice(0, 3).includes(topPick.toUpperCase());
-        } else if (activeCount >= 5) {
+        } else if (payoutTier === "2") {
             return podium.slice(0, 2).includes(topPick.toUpperCase());
-        } else {
-            return podium.slice(0, 1).includes(topPick.toUpperCase());
         }
+        return false;
     }).length;
     let placeStrikeRate = totalSettled > 0 ? (placeHits / totalSettled) * 100 : 0;
     let placeTurnover = totalSettled * 1.0;
@@ -2869,14 +3134,14 @@ function updatePerformanceMetrics(savedList) {
         let topPick = scoredDogsList.length > 0 ? (scoredDogsList[0].name || "") : "";
         let podium = [item.actualPlace1, item.actualPlace2, item.actualPlace3].map(n => (n || "").toUpperCase());
         let activeCount = scoredDogsList.length;
+        let payoutTier = item.manualPayoutTier || (activeCount >= 8 ? "1,2,3" : (activeCount >= 5 ? "2" : "Pay Win Only"));
+
         let isPlaceHit = false;
-        if (topPick) {
-            if (activeCount >= 8) {
+        if (topPick && payoutTier !== "Pay Win Only") {
+            if (payoutTier === "1,2,3") {
                 isPlaceHit = podium.slice(0, 3).includes(topPick.toUpperCase());
-            } else if (activeCount >= 5) {
+            } else if (payoutTier === "2") {
                 isPlaceHit = podium.slice(0, 2).includes(topPick.toUpperCase());
-            } else {
-                isPlaceHit = podium.slice(0, 1).includes(topPick.toUpperCase());
             }
         }
         if (isPlaceHit) {
@@ -2898,14 +3163,14 @@ function updatePerformanceMetrics(savedList) {
         let isWinHit = topPick && item.actualWinner.toUpperCase() === topPick.toUpperCase();
         let podium = [item.actualPlace1, item.actualPlace2, item.actualPlace3].map(n => (n || "").toUpperCase());
         let activeCount = scoredDogsList.length;
+        let payoutTier = item.manualPayoutTier || (activeCount >= 8 ? "1,2,3" : (activeCount >= 5 ? "2" : "Pay Win Only"));
+
         let isPlaceHit = false;
-        if (topPick) {
-            if (activeCount >= 8) {
+        if (topPick && payoutTier !== "Pay Win Only") {
+            if (payoutTier === "1,2,3") {
                 isPlaceHit = podium.slice(0, 3).includes(topPick.toUpperCase());
-            } else if (activeCount >= 5) {
+            } else if (payoutTier === "2") {
                 isPlaceHit = podium.slice(0, 2).includes(topPick.toUpperCase());
-            } else {
-                isPlaceHit = podium.slice(0, 1).includes(topPick.toUpperCase());
             }
         }
         return isWinHit || isPlaceHit;
@@ -2946,7 +3211,7 @@ function exportSavedHistoryCSV() {
         return;
     }
 
-    let csvContent = "data:text/csv;charset=utf-8,Track,Race,Distance,Date,Timestamp,Rank,Dog Name,Box,Sex,WinDiv,PlaceDiv,Rating,BestTime,Best 1Sec,Score,Form History,Actual Winner,Actual Place 2,Actual Place 3,Win Payout,Place Payout\n";
+    let csvContent = "data:text/csv;charset=utf-8,Track,Race,Distance,Date,Timestamp,Rank,Dog Name,Box,Sex,WinDiv,PlaceDiv,Rating,BestTime,Best 1Sec,Score,Form History,Actual Winner,Actual Place 2,Actual Place 3,Win Payout,Place Payout,Payout Tier\n";
     
     window.savedPredictions.forEach(item => {
         let scoredDogsList = item.scoredDogs || [];
@@ -2973,7 +3238,8 @@ function exportSavedHistoryCSV() {
                 `"${item.actualPlace2 || ''}"`,
                 `"${item.actualPlace3 || ''}"`,
                 item.actualWinPayout || 0,
-                item.actualPlacePayout || 0
+                item.actualPlacePayout || 0,
+                `"${item.manualPayoutTier || ''}"`
             ].join(",");
             csvContent += row + "\n";
         });
@@ -3043,6 +3309,7 @@ async function importSavedHistoryCSV(event) {
                 let actualPlace3 = parts[18] || "";
                 let actualWinPayout = parseFloat(parts[19]) || 0;
                 let actualPlacePayout = parseFloat(parts[20]) || 0;
+                let manualPayoutTier = parts[21] || "";
 
                 let groupKey = `${track}_${raceNum}_${timestamp}`;
                 if (!groups[groupKey]) {
@@ -3058,7 +3325,8 @@ async function importSavedHistoryCSV(event) {
                         actualPlace2: actualPlace2,
                         actualPlace3: actualPlace3,
                         actualWinPayout: actualWinPayout,
-                        actualPlacePayout: actualPlacePayout
+                        actualPlacePayout: actualPlacePayout,
+                        manualPayoutTier: manualPayoutTier
                     };
                 }
 
@@ -3144,7 +3412,6 @@ function showSavedPredictionDetails(index) {
 			let isSprint = true;
 			let isDistance = true;
 
-			// Default baseline weights
 			let defaultBaseline = { windiv: 0.4, besttime: 0.5, avgtime: 0.6, best1sec: 0.5, avg1sec: 0.5, earlypos: 0.4, closinggain: 0.4, boxbias: 0.5 };
 			let keys = ['windiv', 'besttime', 'avgtime', 'best1sec', 'avg1sec', 'earlypos', 'closinggain', 'boxbias'];
 			

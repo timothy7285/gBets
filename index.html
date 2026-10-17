@@ -227,10 +227,34 @@
                 </div>
             </div>
 
-            <!-- Tab 3: Meeting Summary Dashboard -->
+           <!-- Tab 3: Meeting Summary Dashboard -->
             <div id="batch-summary-tab" class="tab-content bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-lg shadow-sm flex-grow overflow-auto transition-colors duration-200">
-                <h2 class="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mb-2 tracking-tight">⚡ Batch Meeting Summary</h2>
-                <p class="text-slate-600 dark:text-slate-300 mb-4 text-xs sm:text-sm">Overview of imported race meetings sorted by track name and race number.</p>
+                <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 mb-4">
+                    <div>
+                        <h2 class="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mb-1 tracking-tight">⚡ Batch Meeting Summary</h2>
+                        <p class="text-slate-600 dark:text-slate-300 text-xs sm:text-sm">Overview of imported race meetings sorted by track name and race number.</p>
+                    </div>
+                </div>
+
+                <!-- Track & Date Filter Bar -->
+                <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700 mb-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+                    <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                        <div class="flex items-center gap-1.5 flex-1">
+                            <label class="font-bold uppercase text-[10px]">Track:</label>
+                            <select id="filter-batch-track-select" onchange="renderBatchSummaryDashboard()" class="text-xs px-2 py-1.5 border rounded bg-white dark:bg-slate-900 font-semibold flex-1">
+                                <option value="">All Tracks</option>
+                            </select>
+                        </div>
+                        <div class="flex items-center gap-1.5 flex-1">
+                            <label class="font-bold uppercase text-[10px]">Date:</label>
+                            <select id="filter-batch-date-select" onchange="renderBatchSummaryDashboard()" class="text-xs px-2 py-1.5 border rounded bg-white dark:bg-slate-900 font-semibold flex-1">
+                                <option value="">All Dates</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button onclick="resetBatchFilters()" class="text-xs font-bold text-slate-500 underline">Reset Filters</button>
+                </div>
+
                 <div id="batch-cards-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                     <div class="col-span-full p-8 text-center text-slate-400 italic">No race meetings imported yet.</div>
                 </div>
@@ -652,12 +676,12 @@
         </div>
     </div>
 
-    <script src="script.js"></script>
+    //--- <script src="script.js"></script>
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
       import { getAnalytics } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-analytics.js";
       import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
-    
+
       const firebaseConfig = {
         apiKey: "AIzaSyCSAGUB-R2gvtVadkG3YnJ65lsYfPtyzhU",
         authDomain: "gbets-db.firebaseapp.com",
@@ -667,13 +691,12 @@
         appId: "1:87741949675:web:b6d5f35c5d9e92729400ae",
         measurementId: "G-682N2EM4QF"
       };
-    
+
       const app = initializeApp(firebaseConfig);
       const analytics = getAnalytics(app);
       const db = getFirestore(app);
-    
+
       window.db = db;
-      // Added onSnapshot to firebaseTools
       window.firebaseTools = { doc, setDoc, getDoc, collection, getDocs };
     </script>
 </body>
