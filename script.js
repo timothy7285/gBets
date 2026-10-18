@@ -80,7 +80,6 @@ window.addEventListener('DOMContentLoaded', async () => {
         let storedCustomPresets = null;
         let storedHandle = null;
 
-        // --- TRY LOADING FROM FIREBASE FIRESTORE FIRST ---
         let loadedFromFirebase = false;
         try {
             if (window.db && window.firebaseTools) {
@@ -95,17 +94,15 @@ window.addEventListener('DOMContentLoaded', async () => {
                     if (parsed.savedPredictions) storedSavedPredictions = parsed.savedPredictions;
                     if (parsed.customPresets) storedCustomPresets = parsed.customPresets;
                     loadedFromFirebase = true;
-                    console.log("State successfully loaded from Firebase Cloud Firestore!");
                     setLiveStatusSymbol('connected');
                     document.getElementById('live-file-status').innerText = "Connected & Cloud-Syncing with Firebase Firestore";
                     document.getElementById('header-live-file-status').innerText = "Cloud: Firebase Active";
                 }
             }
         } catch (fbErr) {
-            console.warn("Firebase load failed, falling back to local storage:", fbErr);
+            console.warn("Firebase load failed:", fbErr);
         }
 
-        // Fallback to IndexedDB if Firebase didn't load anything
         if (!loadedFromFirebase) {
             try {
                 if (db) {
@@ -122,7 +119,6 @@ window.addEventListener('DOMContentLoaded', async () => {
                     storedHandle = await getVal('gbet_live_file_handle');
                 }
             } catch (err) {
-                console.warn("IndexedDB load fallback:", err);
                 window.isIndexedDBAvailable = false;
             }
         }
@@ -165,7 +161,6 @@ window.addEventListener('DOMContentLoaded', async () => {
                     showReconnectButtonUI();
                 }
             } catch (err) {
-                console.warn("Auto-reconnect permission check error:", err);
                 if (!loadedFromFirebase) setLiveStatusSymbol('disconnected');
             }
         } else if (!loadedFromFirebase) {
@@ -197,7 +192,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         runDiagnosticsInspector();
         refreshStorageEstimate();
     } catch (err) {
-        console.error("Critical boot error caught:", err);
+        console.error("Critical boot error:", err);
     }
 });
 
@@ -621,7 +616,6 @@ async function importDatabaseSnapshot(event) {
     reader.readAsText(file);
 }
 
-// --- PERSISTENCE FUNCTION SYNCING TO FIREBASE FIRESTORE ---
 async function sortAndPersistMeetingsObject() {
     let sortedKeys = getSortedRaceKeys();
     let sortedMeetings = {};
@@ -640,7 +634,6 @@ async function sortAndPersistMeetingsObject() {
         exportDate: new Date().toISOString()
     };
 
-    // 1. Sync to Firebase Cloud Firestore
     try {
         if (window.db && window.firebaseTools) {
             const { doc, setDoc } = window.firebaseTools;
@@ -652,7 +645,6 @@ async function sortAndPersistMeetingsObject() {
         setLiveStatusSymbol('disconnected');
     }
 
-    // 2. Persist locally to IndexedDB as backup fallback
     try {
         if (db && window.isIndexedDBAvailable) {
             await db.transaction('rw', db.sessions, async () => {
@@ -893,6 +885,7 @@ function parseTxtData(lines, filename) {
     let actualPlace1 = null;
     let actualPlace2 = null;
     let actualPlace3 = null;
+    let actualPlace4 = null;
 
     let startersColMap = {};
 
@@ -997,6 +990,8 @@ function parseTxtData(lines, filename) {
                 actualPlace2 = cleanDogName;
             } else if (placingVal === 3) {
                 actualPlace3 = cleanDogName;
+            } else if (placingVal === 4) {
+                actualPlace4 = cleanDogName;
             }
         }
     }
@@ -1021,7 +1016,8 @@ function parseTxtData(lines, filename) {
         actualWinner: actualWinner,
         actualPlace1: actualPlace1,
         actualPlace2: actualPlace2,
-        actualPlace3: actualPlace3
+        actualPlace3: actualPlace3,
+        actualPlace4: actualPlace4
     };
 
     if (!window.activeRaceKey) {
@@ -1053,6 +1049,7 @@ async function checkAutoFillPostRaceResults() {
                 savedItem.actualPlace1 = meeting.actualPlace1;
                 savedItem.actualPlace2 = meeting.actualPlace2;
                 savedItem.actualPlace3 = meeting.actualPlace3;
+                savedItem.actualPlace4 = meeting.actualPlace4;
                 
                 let scoredDogsList = savedItem.scoredDogs || [];
                 let topPick = scoredDogsList.length > 0 ? scoredDogsList[0] : null;
@@ -1176,13 +1173,13 @@ function updateRaceSelector() {
             let isExpanded = window.expandedRibbonGroups.has(safeGroupId);
 
             let groupContainer = document.createElement('div');
-            groupContainer.className = "flex flex-col mb-1.5";
+            groupContainer.className = "flex flex-col mb-2";
             
             let headerWrapper = document.createElement('div');
-            headerWrapper.className = "flex items-center w-full px-2 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 border border-transparent hover:border-slate-200 dark:hover:border-slate-700";
+            headerWrapper.className = "flex items-center w-full px-2.5 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-colors bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 shadow-sm";
             
             let deleteGroupBtn = document.createElement('button');
-            deleteGroupBtn.className = "text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 mr-1.5 transition-colors flex-shrink-0 text-xs";
+            deleteGroupBtn.className = "text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 mr-2 transition-colors flex-shrink-0 text-xs";
             deleteGroupBtn.title = `Delete all races for ${group.trackName} on ${group.raceDate}`;
             deleteGroupBtn.innerHTML = "🗑️";
             deleteGroupBtn.onclick = async (e) => {
@@ -1203,12 +1200,15 @@ function updateRaceSelector() {
             };
 
             let headerBtn = document.createElement('button');
-            headerBtn.className = "flex-grow flex justify-between items-center text-left focus:outline-none pl-0.5 truncate";
+            headerBtn.className = "flex-grow flex flex-col items-start text-left focus:outline-none pl-0.5 overflow-hidden";
             
             let chevronClass = isExpanded ? "rotate-180" : "";
             headerBtn.innerHTML = `
-                <span class="truncate">${group.trackName} <span class="font-normal text-slate-400 mx-0.5">•</span> <span class="text-[10px]">${group.raceDate}</span></span>
-                <svg id="${safeGroupId}-icon" class="w-3.5 h-3.5 text-slate-400 transition-transform duration-200 flex-shrink-0 ${chevronClass}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path></svg>
+                <div class="flex justify-between items-center w-full pr-1">
+                    <span class="font-black text-slate-900 dark:text-white truncate">${group.trackName}</span>
+                    <svg id="${safeGroupId}-icon" class="w-3.5 h-3.5 text-slate-400 transition-transform duration-200 flex-shrink-0 ${chevronClass}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path></svg>
+                </div>
+                <span class="text-[10px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">${group.raceDate} (${group.keys.length} races)</span>
             `;
 
             headerWrapper.appendChild(deleteGroupBtn);
@@ -1216,7 +1216,7 @@ function updateRaceSelector() {
 
             let contentDiv = document.createElement('div');
             contentDiv.id = safeGroupId;
-            contentDiv.className = `pl-1.5 ml-1.5 border-l-2 border-slate-200 dark:border-slate-700 mt-1.5 gap-1 flex-col ${isExpanded ? 'flex' : 'hidden'}`;
+            contentDiv.className = `pl-2 ml-2 border-l-2 border-slate-200 dark:border-slate-700 mt-2 gap-1.5 flex-col ${isExpanded ? 'flex' : 'hidden'}`;
 
             headerBtn.onclick = function() {
                 let currentlyExpanded = window.expandedRibbonGroups.has(safeGroupId);
@@ -1256,14 +1256,14 @@ function updateRaceSelector() {
                 let savedBadgeIcon = isRaceSaved(raceObj, k) ? '<span class="text-purple-600 dark:text-purple-400 font-bold ml-1" title="Saved to Predictions History">💾</span>' : '';
                 
                 let pillWrapper = document.createElement('div');
-                pillWrapper.className = `w-full rounded text-[11px] font-bold transition-colors flex items-center justify-between border ${
+                pillWrapper.className = `w-full rounded text-xs font-bold transition-colors flex items-center justify-between border ${
                     isCurrent 
                     ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-sm' 
                     : 'bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
-                } px-2 py-1.5`;
+                } px-2.5 py-2`;
 
                 let deleteRaceBtn = document.createElement('button');
-                deleteRaceBtn.className = `flex-shrink-0 p-0.5 mr-1.5 rounded transition-colors text-xs ${isCurrent ? 'text-slate-300 hover:text-white dark:text-slate-600 dark:hover:text-slate-900' : 'text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400'}`;
+                deleteRaceBtn.className = `flex-shrink-0 p-0.5 mr-2 rounded transition-colors text-xs ${isCurrent ? 'text-slate-300 hover:text-white dark:text-slate-600 dark:hover:text-slate-900' : 'text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400'}`;
                 deleteRaceBtn.title = `Delete ${k}`;
                 deleteRaceBtn.innerHTML = "🗑️";
                 deleteRaceBtn.onclick = async (e) => {
@@ -1282,8 +1282,14 @@ function updateRaceSelector() {
                 };
 
                 let pillBtn = document.createElement('button');
-                pillBtn.className = "flex-grow text-left flex items-center justify-between truncate pr-1 focus:outline-none";
-                pillBtn.innerHTML = `<span class="truncate pr-1">Race ${raceObj.raceNumber || '?'} ${raceObj.raceDistance ? '[' + raceObj.raceDistance + ']' : ''}</span> <span class="flex-shrink-0 flex items-center">${savedBadgeIcon}${statusIndicator}</span>`;
+                pillBtn.className = "flex-grow text-left flex items-center justify-between pr-1 focus:outline-none";
+                pillBtn.innerHTML = `
+                    <div class="flex items-center gap-1.5 truncate">
+                        <span class="font-black">Race ${raceObj.raceNumber || '?'}</span>
+                        ${raceObj.raceDistance ? `<span class="text-[10px] font-mono px-1 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">${raceObj.raceDistance}</span>` : ''}
+                    </div>
+                    <span class="flex-shrink-0 flex items-center gap-0.5">${savedBadgeIcon}${statusIndicator}</span>
+                `;
                 pillBtn.title = k;
                 pillBtn.onclick = () => switchActiveRace(k);
 
@@ -1378,7 +1384,8 @@ function renderActiveRace() {
         if (s.placing === 1) placingBadge = '<span class="bg-green-100 text-green-800 font-bold px-2 py-0.5 rounded">1st</span>';
         else if (s.placing === 2) placingBadge = '<span class="bg-yellow-100 text-yellow-800 font-bold px-2 py-0.5 rounded">2nd</span>';
         else if (s.placing === 3) placingBadge = '<span class="bg-orange-100 text-orange-800 font-bold px-2 py-0.5 rounded">3rd</span>';
-        else if (s.placing > 3) placingBadge = `<span class="text-slate-500">${s.placing}th</span>`;
+        else if (s.placing === 4) placingBadge = '<span class="bg-indigo-100 text-indigo-800 font-bold px-2 py-0.5 rounded">4th</span>';
+        else if (s.placing > 4) placingBadge = `<span class="text-slate-500">${s.placing}th</span>`;
 
         if (isVacant || s.scratched) {
             tr.classList.add('bg-slate-50', 'dark:bg-slate-800/50', 'text-slate-400');
@@ -1412,8 +1419,8 @@ function populateBatchFilterDropdowns() {
     let dateSelect = document.getElementById('filter-batch-date-select');
     if (!trackSelect || !dateSelect) return;
 
-    let currentTrackVal = trackSelect.value;
-    let currentDateVal = dateSelect.value;
+    let currentTrackVal = trackSelect.value.toUpperCase().trim();
+    let currentDateVal = dateSelect.value.toUpperCase().trim();
 
     let tracks = new Set();
     let dates = new Set();
@@ -1421,9 +1428,7 @@ function populateBatchFilterDropdowns() {
     Object.keys(window.allRaceMeetings).forEach(k => {
         let race = window.allRaceMeetings[k];
         let t = (race.trackName || "UNKNOWN").toUpperCase();
-        let d = race.raceDate || "No Date";
         if (t) tracks.add(t);
-        if (d && d !== "No Date") dates.add(d);
     });
 
     trackSelect.innerHTML = `<option value="">All Tracks</option>`;
@@ -1433,6 +1438,16 @@ function populateBatchFilterDropdowns() {
         opt.innerText = t;
         if (t === currentTrackVal) opt.selected = true;
         trackSelect.appendChild(opt);
+    });
+
+    Object.keys(window.allRaceMeetings).forEach(k => {
+        let race = window.allRaceMeetings[k];
+        let t = (race.trackName || "UNKNOWN").toUpperCase();
+        let d = race.raceDate || "No Date";
+        
+        if (!currentTrackVal || t === currentTrackVal) {
+            if (d && d !== "No Date") dates.add(d);
+        }
     });
 
     dateSelect.innerHTML = `<option value="">All Dates</option>`;
@@ -1502,6 +1517,11 @@ function renderBatchSummaryDashboard() {
             }
         }
 
+        let cleanDate = race.raceDate || "No Date";
+        if (/^\d{8}$/.test(cleanDate)) {
+            cleanDate = `${cleanDate.slice(0,2)}/${cleanDate.slice(2,4)}/${cleanDate.slice(4,8)}`;
+        }
+
         const card = document.createElement('div');
         card.className = "bg-slate-50 dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm hover:border-slate-400 cursor-pointer transition-colors flex flex-col justify-between";
         card.onclick = function() {
@@ -1510,11 +1530,17 @@ function renderBatchSummaryDashboard() {
         };
         card.innerHTML = `
             <div>
-                <div class="flex justify-between items-center mb-1.5">
-                    <span class="text-xs font-bold text-slate-500 dark:text-slate-400 truncate">${key}</span>
-                    <span class="text-[10px] font-mono bg-slate-200 dark:bg-slate-700 px-1 rounded">${race.raceDistance || 'N/A'}</span>
+                <div class="flex flex-col mb-2 pb-2 border-b border-slate-200 dark:border-slate-700">
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-black uppercase text-slate-900 dark:text-white tracking-wide">${race.trackName || 'UNKNOWN'}</span>
+                        <span class="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">Race ${race.raceNumber || '?'}</span>
+                    </div>
+                    <div class="flex justify-between items-center mt-1">
+                        <span class="text-[11px] text-slate-500 dark:text-slate-400 font-mono">📅 ${cleanDate}</span>
+                        <span class="text-[10px] font-mono text-slate-500 dark:text-slate-400">${race.raceDistance ? '📏 ' + race.raceDistance : ''}</span>
+                    </div>
                 </div>
-                <div class="text-sm font-black text-slate-900 dark:text-white truncate mb-2">🥇 ${topPick}</div>
+                <div class="text-sm font-black text-slate-900 dark:text-white mb-3">🥇 ${topPick}</div>
             </div>
             <div class="flex justify-between items-center pt-2 border-t border-slate-200 dark:border-slate-700">
                 <span class="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Confidence</span>
@@ -2421,6 +2447,7 @@ async function refreshPredictions(showNotif = true) {
             actualPlace1: activeRace.actualPlace1 || "",
             actualPlace2: activeRace.actualPlace2 || "",
             actualPlace3: activeRace.actualPlace3 || "",
+            actualPlace4: activeRace.actualPlace4 || "",
             actualWinPayout: defaultWinPayout,
             actualPlacePayout: defaultPlacePayout,
             weights: appliedWeights
@@ -2456,12 +2483,34 @@ async function refreshPredictions(showNotif = true) {
         
         let topPickAvgTime = scoredDogs[0].rawAvgTime;
 
+        let validWinDivs = scoredDogs.map(d => parseFloat(d.winDiv) || 0).filter(div => div > 0);
+        let lowestWinDiv = validWinDivs.length > 0 ? Math.min(...validWinDivs) : 0;
+
+        let favoriteDogName = "";
+        if (lowestWinDiv > 0) {
+            let tiedDogs = scoredDogs.filter(d => (parseFloat(d.winDiv) || 0) === lowestWinDiv);
+            if (tiedDogs.length === 1) {
+                favoriteDogName = tiedDogs[0].name.toUpperCase();
+            } else if (tiedDogs.length > 1) {
+                tiedDogs.sort((a, b) => {
+                    let pA = (parseFloat(a.placeDiv) > 0) ? parseFloat(a.placeDiv) : 999;
+                    let pB = (parseFloat(b.placeDiv) > 0) ? parseFloat(b.placeDiv) : 999;
+                    return pA - pB;
+                });
+                favoriteDogName = tiedDogs[0].name.toUpperCase();
+            }
+        }
+
         let analysisHtml = '';
         scoredDogs.forEach((dog, index) => {
             let sexBadge = dog.sex === 'Dog' ? '<span class="text-blue-600 dark:text-blue-400 text-xs font-bold ml-1">🐶</span>' : (dog.sex === 'Bitch' ? '<span class="text-pink-600 dark:text-pink-400 text-xs font-bold ml-1">🐾</span>' : '');
             let sparkline = generateSparkline(dog.formArray);
             let daysSinceText = dog.daysSinceLastRun !== null ? `<span class="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1 block">⏱️ Days Since Last Run: <strong class="text-slate-800 dark:text-slate-200">${dog.daysSinceLastRun} days</strong> (${dog.recencyText})</span>` : `<span class="text-xs font-mono text-slate-400 mt-1 block">⏱️ Days Since Last Run: N/A</span>`;
-            let ratingBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black font-mono bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 ml-2">⭐ Rating: ${dog.ratingOutOf100}</span>`;
+            let ratingBadge = dog.ratingOutOf100 !== undefined ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black font-mono bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 ml-2"><span class="text-red-500">&#9733;</span> ${dog.ratingOutOf100}</span>` : '';
+            
+            let isFavorite = favoriteDogName !== "" && dog.name.toUpperCase() === favoriteDogName;
+            let favoriteBadge = isFavorite ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 ml-2">⭐ Favorite</span>` : '';
+
             let pirBadge = getRunningStyleBadge(parseFloat(dog.avgEarly), parseFloat(dog.avgGain));
             let boxBiasBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">📦 Box ${dog.officialBox}: +${dog.boxBiasBonus.toFixed(1)}</span>`;
             let trafficBadge = dog.trafficPenalty !== 0 ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800">🚦 Traffic Penalty: ${dog.trafficPenalty > 0 ? '+' : ''}${dog.trafficPenalty}</span>` : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">🚦 Clean Map</span>`;
@@ -2497,7 +2546,7 @@ async function refreshPredictions(showNotif = true) {
                 <li class="${bgColor} p-4 border ${borderColor} rounded-lg shadow-sm flex flex-col md:flex-row md:justify-between mb-3 transition-colors">
                     <div class="mb-2 md:mb-0 flex flex-col justify-center">
                         <div class="flex items-center flex-wrap gap-1">
-                            ${rankDisplay} ${sexBadge} <span class="text-sm font-mono text-slate-500 dark:text-slate-400 font-bold ml-1">(Box ${dog.officialBox})</span> ${ratingBadge}
+                            ${rankDisplay} ${sexBadge} <span class="text-sm font-mono text-slate-500 dark:text-slate-400 font-bold ml-1">(Box ${dog.officialBox})</span> ${ratingBadge} ${favoriteBadge}
                         </div>
                         <div class="mt-2 flex flex-col gap-1">
                             <div class="flex items-center gap-2">
@@ -2569,6 +2618,7 @@ async function saveCurrentPredictions() {
         window.currentComputedResult.actualPlace1 = meeting.actualPlace1;
         window.currentComputedResult.actualPlace2 = meeting.actualPlace2;
         window.currentComputedResult.actualPlace3 = meeting.actualPlace3;
+        window.currentComputedResult.actualPlace4 = meeting.actualPlace4;
 
         let scoredDogsList = window.currentComputedResult.scoredDogs || [];
         let topPick = scoredDogsList.length > 0 ? scoredDogsList[0] : null;
@@ -2624,6 +2674,7 @@ async function saveCurrentPredictions() {
             window.currentComputedResult.actualPlace1 = existingItem.actualPlace1;
             window.currentComputedResult.actualPlace2 = existingItem.actualPlace2;
             window.currentComputedResult.actualPlace3 = existingItem.actualPlace3;
+            window.currentComputedResult.actualPlace4 = existingItem.actualPlace4;
             window.currentComputedResult.actualWinPayout = existingItem.actualWinPayout;
             window.currentComputedResult.actualPlacePayout = existingItem.actualPlacePayout;
             window.currentComputedResult.manualPayoutTier = existingItem.manualPayoutTier;
@@ -2749,6 +2800,16 @@ async function updateActualPlace3(index, dogName) {
     }
 }
 
+async function updateActualPlace4(index, dogName) {
+    if (window.savedPredictions[index]) {
+        let item = window.savedPredictions[index];
+        item.actualPlace4 = dogName;
+        await sortAndPersistMeetingsObject();
+        renderSavedPredictions();
+        updateAllUIComponents();
+    }
+}
+
 async function updateWinPayout(index, val) {
     if (window.savedPredictions[index]) {
         window.savedPredictions[index].actualWinPayout = parseFloat(val) || 0;
@@ -2829,17 +2890,15 @@ function populateSavedFilterDropdowns() {
     let dateSelect = document.getElementById('filter-date-select');
     if (!trackSelect || !dateSelect) return;
 
-    let currentTrackVal = trackSelect.value;
-    let currentDateVal = dateSelect.value;
+    let currentTrackVal = trackSelect.value.toUpperCase().trim();
+    let currentDateVal = dateSelect.value.trim();
 
     let tracks = new Set();
     let dates = new Set();
 
     window.savedPredictions.forEach(item => {
         let t = extractTrackNameFromSaved(item);
-        let d = extractDateFromSaved(item);
         if (t) tracks.add(t);
-        if (d && d !== "N/A") dates.add(d);
     });
 
     trackSelect.innerHTML = `<option value="">All Tracks</option>`;
@@ -2849,6 +2908,15 @@ function populateSavedFilterDropdowns() {
         opt.innerText = t;
         if (t === currentTrackVal) opt.selected = true;
         trackSelect.appendChild(opt);
+    });
+
+    window.savedPredictions.forEach(item => {
+        let t = extractTrackNameFromSaved(item);
+        let d = extractDateFromSaved(item);
+        
+        if (!currentTrackVal || t === currentTrackVal) {
+            if (d && d !== "N/A") dates.add(d);
+        }
     });
 
     dateSelect.innerHTML = `<option value="">All Dates</option>`;
@@ -2955,6 +3023,7 @@ function renderSavedPredictions() {
         let topPickName = scoredDogsList.length > 0 ? (scoredDogsList[0].name || "") : "";
         let secondPickName = scoredDogsList.length > 1 ? (scoredDogsList[1].name || "") : "";
         let thirdPickName = scoredDogsList.length > 2 ? (scoredDogsList[2].name || "") : "";
+        let fourthPickName = scoredDogsList.length > 3 ? (scoredDogsList[3].name || "") : "";
 
         let isWinSettled = item.actualWinner && item.actualWinner.trim() !== "";
         let isWinHit = isWinSettled && item.actualWinner.toUpperCase() === topPickName.toUpperCase();
@@ -2977,7 +3046,6 @@ function renderSavedPredictions() {
             }
         }
 
-        // Exacta Check: Top 2 picks match actual 1st and 2nd place finishers (in any order / boxed)
         let isExactSettled = isWinSettled && item.actualPlace2 && item.actualPlace2.trim() !== "";
         let isExactHit = false;
         if (isExactSettled && topPickName && secondPickName) {
@@ -2986,7 +3054,6 @@ function renderSavedPredictions() {
             isExactHit = actualTopTwo.length === 2 && actualTopTwo.every(dog => predictedTopTwo.includes(dog));
         }
 
-        // Trifecta Check: Top 3 picks match actual 1st, 2nd, and 3rd place finishers (in any order / boxed)
         let isTrifectaSettled = isExactSettled && item.actualPlace3 && item.actualPlace3.trim() !== "";
         let isTrifectaHit = false;
         if (isTrifectaSettled && topPickName && secondPickName && thirdPickName) {
@@ -2995,10 +3062,35 @@ function renderSavedPredictions() {
             isTrifectaHit = actualTopThree.length === 3 && actualTopThree.every(dog => predictedTopThree.includes(dog));
         }
 
-        // Amber/Orange Distinct Styling for Payout Tier Badge
+        let isFirst4Settled = isTrifectaSettled && item.actualPlace4 && item.actualPlace4.trim() !== "";
+        let isFirst4Hit = false;
+        if (isFirst4Settled && scoredDogsList.length >= 4) {
+            let actualTopFour = [item.actualPlace1, item.actualPlace2, item.actualPlace3, item.actualPlace4].map(n => (n || "").toUpperCase());
+            let predictedTopFour = scoredDogsList.slice(0, 4).map(d => (d.name || "").toUpperCase());
+            isFirst4Hit = actualTopFour.length === 4 && predictedTopFour.every(dog => actualTopFour.includes(dog));
+        }
+
         let tierBadgeClass = "bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700 font-bold";
 
-        let lossBadgeHTML = (!isPlaceHit && !isWinHit && !isExactHit && !isTrifectaHit && isWinSettled) ? '<span class="bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-200 border border-red-300 dark:border-red-700 text-xs px-2 py-0.5 rounded font-bold">Loss</span>' : '';
+        let lossBadgeHTML = (!isPlaceHit && !isWinHit && !isExactHit && !isTrifectaHit && !isFirst4Hit && isWinSettled) ? '<span class="bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-200 border border-red-300 dark:border-red-700 text-xs px-2 py-0.5 rounded font-bold">Loss</span>' : '';
+
+        let validWinDivs = scoredDogsList.map(d => parseFloat(d.winDiv) || 0).filter(div => div > 0);
+        let lowestWinDiv = validWinDivs.length > 0 ? Math.min(...validWinDivs) : 0;
+
+        let favoriteDogName = "";
+        if (lowestWinDiv > 0) {
+            let tiedDogs = scoredDogsList.filter(d => (parseFloat(d.winDiv) || 0) === lowestWinDiv);
+            if (tiedDogs.length === 1) {
+                favoriteDogName = tiedDogs[0].name.toUpperCase();
+            } else if (tiedDogs.length > 1) {
+                tiedDogs.sort((a, b) => {
+                    let pA = (parseFloat(a.placeDiv) > 0) ? parseFloat(a.placeDiv) : 999;
+                    let pB = (parseFloat(b.placeDiv) > 0) ? parseFloat(b.placeDiv) : 999;
+                    return pA - pB;
+                });
+                favoriteDogName = tiedDogs[0].name.toUpperCase();
+            }
+        }
 
         html += `
             <div class="bg-white dark:bg-slate-900 p-5 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm saved-item-card">
@@ -3021,40 +3113,48 @@ function renderSavedPredictions() {
                         ${isPlaceHit && payoutTier !== 'Pay Win Only' ? '<span class="bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 border border-blue-300 dark:border-blue-700 text-xs px-2 py-0.5 rounded font-bold">Place</span>' : ''}
                         ${isExactHit ? '<span class="bg-indigo-100 dark:bg-indigo-900/40 text-indigo-800 dark:text-indigo-200 border border-indigo-300 dark:border-indigo-700 text-xs px-2 py-0.5 rounded font-bold">Exac</span>' : ''}
                         ${isTrifectaHit ? '<span class="bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-700 text-xs px-2 py-0.5 rounded font-bold">Tri</span>' : ''}
+                        ${isFirst4Hit ? '<span class="bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-200 border border-teal-300 dark:border-teal-700 text-xs px-2 py-0.5 rounded font-bold">First 4</span>' : ''}
                         ${lossBadgeHTML}
                         <button onclick="deleteSavedPrediction(${actualIndex})" class="text-xs text-red-600 hover:text-red-800 font-bold px-2 py-1 rounded border border-red-200 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors">Delete</button>
                     </div>
                 </div>
 
-                <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700 mb-3 grid grid-cols-1 sm:grid-cols-5 gap-3 text-xs">
+                <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700 mb-3 grid grid-cols-1 sm:grid-cols-6 gap-2 text-xs">
                     <div>
-                        <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">1st Place Winner:</label>
-                        <select onchange="updateActualWinner(${actualIndex}, this.value)" class="w-full text-xs px-2 py-1 border border-slate-300 dark:border-slate-700 rounded bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-semibold focus:outline-none">
-                            <option value="">-- Select 1st --</option>
+                        <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">1st Winner:</label>
+                        <select onchange="updateActualWinner(${actualIndex}, this.value)" class="w-full text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-semibold focus:outline-none">
+                            <option value="">-- 1st --</option>
                             ${scoredDogsList.map(d => `<option value="${d.name}" ${item.actualWinner === d.name ? 'selected' : ''}>${d.name}</option>`).join('')}
                         </select>
                     </div>
                     <div>
                         <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">2nd Place:</label>
-                        <select onchange="updateActualPlace2(${actualIndex}, this.value)" class="w-full text-xs px-2 py-1 border border-slate-300 dark:border-slate-700 rounded bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-semibold focus:outline-none">
-                            <option value="">-- Select 2nd --</option>
+                        <select onchange="updateActualPlace2(${actualIndex}, this.value)" class="w-full text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-semibold focus:outline-none">
+                            <option value="">-- 2nd --</option>
                             ${scoredDogsList.map(d => `<option value="${d.name}" ${item.actualPlace2 === d.name ? 'selected' : ''}>${d.name}</option>`).join('')}
                         </select>
                     </div>
                     <div>
                         <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">3rd Place:</label>
-                        <select onchange="updateActualPlace3(${actualIndex}, this.value)" class="w-full text-xs px-2 py-1 border border-slate-300 dark:border-slate-700 rounded bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-semibold focus:outline-none">
-                            <option value="">-- Select 3rd --</option>
+                        <select onchange="updateActualPlace3(${actualIndex}, this.value)" class="w-full text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-semibold focus:outline-none">
+                            <option value="">-- 3rd --</option>
                             ${scoredDogsList.map(d => `<option value="${d.name}" ${item.actualPlace3 === d.name ? 'selected' : ''}>${d.name}</option>`).join('')}
                         </select>
                     </div>
                     <div>
+                        <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">4th Place:</label>
+                        <select onchange="updateActualPlace4(${actualIndex}, this.value)" class="w-full text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-semibold focus:outline-none">
+                            <option value="">-- 4th --</option>
+                            ${scoredDogsList.map(d => `<option value="${d.name}" ${item.actualPlace4 === d.name ? 'selected' : ''}>${d.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div>
                         <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">Win Payout ($):</label>
-                        <input type="number" step="0.1" value="${item.actualWinPayout || 0}" onchange="updateWinPayout(${actualIndex}, this.value)" class="w-full text-xs px-2 py-1 border border-slate-300 dark:border-slate-700 rounded bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-mono font-bold focus:outline-none"/>
+                        <input type="number" step="0.1" value="${item.actualWinPayout || 0}" onchange="updateWinPayout(${actualIndex}, this.value)" class="w-full text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none"/>
                     </div>
                     <div>
                         <label class="block font-bold text-slate-700 dark:text-slate-300 mb-1">Place Payout ($):</label>
-                        <input type="number" step="0.1" value="${item.actualPlacePayout || 0}" onchange="updatePlacePayout(${actualIndex}, this.value)" class="w-full text-xs px-2 py-1 border border-slate-300 dark:border-slate-700 rounded bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-mono font-bold focus:outline-none"/>
+                        <input type="number" step="0.1" value="${item.actualPlacePayout || 0}" onchange="updatePlacePayout(${actualIndex}, this.value)" class="w-full text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none"/>
                     </div>
                 </div>
 
@@ -3067,12 +3167,16 @@ function renderSavedPredictions() {
             if(idx === 0) { bg = "bg-[#dcfce7] dark:bg-green-950/40"; textRank = "text-green-900 dark:text-green-200 font-black"; }
             if(idx === 1) { bg = "bg-[#fef08a] dark:bg-yellow-950/40"; textRank = "text-yellow-900 dark:text-yellow-200 font-bold"; }
             if(idx === 2) { bg = "bg-[#ffedd5] dark:bg-orange-950/40"; textRank = "text-orange-900 dark:text-orange-200 font-bold"; }
+            if(idx === 3) { bg = "bg-[#e0e7ff] dark:bg-indigo-950/40"; textRank = "text-indigo-900 dark:text-indigo-200 font-bold"; }
             
             let pDivDisplay = dog.placeDiv !== undefined && !isNaN(dog.placeDiv) ? dog.placeDiv : '0';
-            let ratingDisplay = dog.ratingOutOf100 !== undefined ? `<span class="bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 px-2 py-0.5 rounded text-xs font-black font-mono ml-2">⭐ Rating: ${dog.ratingOutOf100}</span>` : '';
+            let ratingDisplay = dog.ratingOutOf100 !== undefined ? `<span class="bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 px-2 py-0.5 rounded text-xs font-black font-mono ml-2"><span class="text-red-500">&#9733;</span> ${dog.ratingOutOf100}</span>` : '';
+            
+            let isFavorite = favoriteDogName !== "" && dog.name.toUpperCase() === favoriteDogName;
+            let favoriteDisplay = isFavorite ? `<span class="bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 px-2 py-0.5 rounded text-xs font-black ml-2">⭐ Favorite</span>` : '';
 
             html += `<div class="${bg} p-2.5 rounded text-sm text-slate-700 dark:text-slate-300 border border-slate-200/50 dark:border-slate-700 flex justify-between items-center">
-                        <div class="flex items-center gap-1 flex-wrap"><span class="${textRank}">${idx + 1}. ${dog.name}</span> ${sexLabel} <span class="text-xs font-mono text-slate-500 dark:text-slate-400">(B${dog.officialBox || dog.box})</span> ${ratingDisplay}</div>
+                        <div class="flex items-center gap-1 flex-wrap"><span class="${textRank}">${idx + 1}. ${dog.name}</span> ${sexLabel} <span class="text-xs font-mono text-slate-500 dark:text-slate-400">(B${dog.officialBox || dog.box})</span> ${ratingDisplay} ${favoriteDisplay}</div>
                         <div class="text-xs font-mono flex items-center gap-2">
                             <span>Win:$${dog.winDiv} | Plc:$${pDivDisplay}</span> 
                             <span class="text-slate-300 dark:text-slate-600">|</span> 
@@ -3211,7 +3315,7 @@ function exportSavedHistoryCSV() {
         return;
     }
 
-    let csvContent = "data:text/csv;charset=utf-8,Track,Race,Distance,Date,Timestamp,Rank,Dog Name,Box,Sex,WinDiv,PlaceDiv,Rating,BestTime,Best 1Sec,Score,Form History,Actual Winner,Actual Place 2,Actual Place 3,Win Payout,Place Payout,Payout Tier\n";
+    let csvContent = "data:text/csv;charset=utf-8,Track,Race,Distance,Date,Timestamp,Rank,Dog Name,Box,Sex,WinDiv,PlaceDiv,Rating,BestTime,Best 1Sec,Score,Form History,Actual Winner,Actual Place 2,Actual Place 3,Actual Place 4,Win Payout,Place Payout,Payout Tier\n";
     
     window.savedPredictions.forEach(item => {
         let scoredDogsList = item.scoredDogs || [];
@@ -3237,6 +3341,7 @@ function exportSavedHistoryCSV() {
                 `"${item.actualWinner || ''}"`,
                 `"${item.actualPlace2 || ''}"`,
                 `"${item.actualPlace3 || ''}"`,
+                `"${item.actualPlace4 || ''}"`,
                 item.actualWinPayout || 0,
                 item.actualPlacePayout || 0,
                 `"${item.manualPayoutTier || ''}"`
@@ -3307,9 +3412,10 @@ async function importSavedHistoryCSV(event) {
                 let actualWinner = parts[16] || "";
                 let actualPlace2 = parts[17] || "";
                 let actualPlace3 = parts[18] || "";
-                let actualWinPayout = parseFloat(parts[19]) || 0;
-                let actualPlacePayout = parseFloat(parts[20]) || 0;
-                let manualPayoutTier = parts[21] || "";
+                let actualPlace4 = parts[19] || "";
+                let actualWinPayout = parseFloat(parts[20]) || 0;
+                let actualPlacePayout = parseFloat(parts[21]) || 0;
+                let manualPayoutTier = parts[22] || "";
 
                 let groupKey = `${track}_${raceNum}_${timestamp}`;
                 if (!groups[groupKey]) {
@@ -3324,6 +3430,7 @@ async function importSavedHistoryCSV(event) {
                         actualPlace1: actualWinner,
                         actualPlace2: actualPlace2,
                         actualPlace3: actualPlace3,
+                        actualPlace4: actualPlace4,
                         actualWinPayout: actualWinPayout,
                         actualPlacePayout: actualPlacePayout,
                         manualPayoutTier: manualPayoutTier
@@ -3456,13 +3563,34 @@ function showSavedPredictionDetails(index) {
     let scratchedDogs = item.scratchedDogs || [];
     let topPickAvgTime = scoredDogs.length > 0 ? scoredDogs[0].rawAvgTime : null;
 
+    let validWinDivs = scoredDogs.map(d => parseFloat(d.winDiv) || 0).filter(div => div > 0);
+    let lowestWinDiv = validWinDivs.length > 0 ? Math.min(...validWinDivs) : 0;
+
+    let favoriteDogName = "";
+    if (lowestWinDiv > 0) {
+        let tiedDogs = scoredDogs.filter(d => (parseFloat(d.winDiv) || 0) === lowestWinDiv);
+        if (tiedDogs.length === 1) {
+            favoriteDogName = tiedDogs[0].name.toUpperCase();
+        } else if (tiedDogs.length > 1) {
+            tiedDogs.sort((a, b) => {
+                let pA = (parseFloat(a.placeDiv) > 0) ? parseFloat(a.placeDiv) : 999;
+                let pB = (parseFloat(b.placeDiv) > 0) ? parseFloat(b.placeDiv) : 999;
+                return pA - pB;
+            });
+            favoriteDogName = tiedDogs[0].name.toUpperCase();
+        }
+    }
+
     scoredDogs.forEach((dog, idx) => {
         let sexBadge = dog.sex === 'Dog' ? '<span class="text-blue-600 dark:text-blue-400 text-xs font-bold ml-1">🐶</span>' : (dog.sex === 'Bitch' ? '<span class="text-pink-600 dark:text-pink-400 text-xs font-bold ml-1">🐾</span>' : '');
         let sparkline = generateSparkline(dog.formArray || []);
         let daysSinceText = dog.daysSinceLastRun !== null && dog.daysSinceLastRun !== undefined ? `<span class="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1 block">⏱️ Days Since Last Run: <strong class="text-slate-800 dark:text-slate-200">${dog.daysSinceLastRun} days</strong> (${dog.recencyText || 'Standard form recency'})</span>` : `<span class="text-xs font-mono text-slate-400 mt-1 block">⏱️ Days Since Last Run: N/A (CSV Import/Missing)</span>`;
         
-        let ratingBadge = dog.ratingOutOf100 !== undefined ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black font-mono bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 ml-2">⭐ Rating: ${dog.ratingOutOf100}</span>` : '';
+        let ratingBadge = dog.ratingOutOf100 !== undefined ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black font-mono bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 ml-2"><span class="text-red-500">&#9733;</span> ${dog.ratingOutOf100}</span>` : '';
         
+        let isFavorite = favoriteDogName !== "" && dog.name.toUpperCase() === favoriteDogName;
+        let favoriteBadge = isFavorite ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 ml-2">⭐ Favorite</span>` : '';
+
         let pirBadge = getRunningStyleBadge(parseFloat(dog.avgEarly), parseFloat(dog.avgGain));
         let boxBiasBonusVal = dog.boxBiasBonus || 0;
         let boxBiasBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">📦 Box ${dog.officialBox || dog.box}: ${boxBiasBonusVal >= 0 ? '+' : ''}${boxBiasBonusVal.toFixed(1)}</span>`;
@@ -3495,6 +3623,9 @@ function showSavedPredictionDetails(index) {
         } else if (idx === 2) { 
             bgColor = "bg-[#ffedd5] dark:bg-orange-950/40"; borderColor = "border-[#fdba74] dark:border-orange-800";
             rankDisplay = `<strong class="text-lg text-orange-900 dark:text-orange-200 font-black">${idx + 1}. ${dog.name}</strong>`;
+        } else if (idx === 3) { 
+            bgColor = "bg-[#e0e7ff] dark:bg-indigo-950/40"; borderColor = "border-[#c7d2fe] dark:border-indigo-800";
+            rankDisplay = `<strong class="text-lg text-indigo-900 dark:text-indigo-200 font-black">${idx + 1}. ${dog.name}</strong>`;
         }
         
         let winProbVal = dog.winProb !== undefined && !isNaN(dog.winProb) ? dog.winProb.toFixed(1) + "%" : "N/A";
@@ -3503,7 +3634,7 @@ function showSavedPredictionDetails(index) {
             <li class="${bgColor} p-4 border ${borderColor} rounded-lg shadow-sm flex flex-col md:flex-row md:justify-between mb-3 transition-colors">
                 <div class="mb-2 md:mb-0 flex flex-col justify-center">
                     <div class="flex items-center flex-wrap gap-1">
-                        ${rankDisplay} ${sexBadge} <span class="text-sm font-mono text-slate-500 dark:text-slate-400 font-bold ml-1">(Box ${dog.officialBox || dog.box})</span> ${ratingBadge}
+                        ${rankDisplay} ${sexBadge} <span class="text-sm font-mono text-slate-500 dark:text-slate-400 font-bold ml-1">(Box ${dog.officialBox || dog.box})</span> ${ratingBadge} ${favoriteBadge}
                     </div>
                     <div class="mt-2 flex flex-col gap-1">
                         <div class="flex items-center gap-2">
