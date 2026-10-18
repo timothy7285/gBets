@@ -108,6 +108,35 @@
                 <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'settings-tab')">⚙️ Settings</button>
                 <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'app-info')">App Info</button>
             </div>
+			
+		<!-- CSV Stats Management Modal -->
+		<div id="csv-manager-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
+			<div id="csv-manager-modal-content" class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden transform scale-95 transition-transform duration-300 flex flex-col max-h-[85vh]">
+				<!-- Modal Header -->
+				<div class="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
+					<div>
+						<h3 class="font-black text-lg text-slate-900 dark:text-white">Manage Imported CSV Stats</h3>
+						<p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">View and delete individual or all imported performance files.</p>
+					</div>
+					<button onclick="closeCsvManagerModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold text-lg px-2 py-1 rounded transition-colors">&times;</button>
+				</div>
+
+				<!-- Modal Body / File List -->
+				<div class="p-6 overflow-y-auto flex-grow space-y-3" id="csv-manager-file-list">
+					<!-- Dynamically populated file groups go here -->
+				</div>
+
+				<!-- Modal Footer -->
+				<div class="px-6 py-4 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
+					<button onclick="confirmDeleteAllCsvFiles()" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 px-4 rounded shadow transition-colors">
+						🗑️ Delete All CSVs
+					</button>
+					<button onclick="closeCsvManagerModal()" class="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 text-xs font-bold py-2 px-4 rounded shadow transition-colors">
+						Close
+					</button>
+				</div>
+			</div>
+		</div>	
 
             <!-- Tab 1: Race Details -->
             <div id="race-details" class="tab-content active bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-lg shadow-sm overflow-auto flex-grow transition-colors duration-200">

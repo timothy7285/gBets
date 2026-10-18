@@ -1583,183 +1583,285 @@ async function clearActiveMeetingsData() {
     }
 }
 
-async function clearDogStatsData() {
-    if (!window.dogStats || window.dogStats.length === 0) {
-        showNotification("No dog statistics loaded to clear.");
-        return;
-    }
-    if (confirm("Are you sure you want to clear all accumulated dog statistics history?")) {
-        window.dogStats = [];
-        await sortAndPersistMeetingsObject();
+		// Opens the CSV manager modal instead of direct confirmation
+		function clearDogStatsData() {
+			if (!window.dogStats || window.dogStats.length === 0) {
+				showNotification("No dog statistics loaded to clear.");
+				return;
+			}
+			renderCsvManagerModalList();
+			
+			let modal = document.getElementById('csv-manager-modal');
+			let modalContent = document.getElementById('csv-manager-modal-content');
+			modal.classList.remove('hidden');
+			void modal.offsetWidth;
+			modal.classList.remove('opacity-0');
+			modalContent.classList.remove('scale-95');
+		}
 
-        document.getElementById('csvFileLabel').innerText = "Drag files or click";
-        renderStatsTable();
-        renderActiveRace();
-        renderBatchSummaryDashboard();
-        showNotification("All dog statistics history cleared.", "success");
-        refreshStorageEstimate();
-    }
-}
+		function closeCsvManagerModal() {
+			let modal = document.getElementById('csv-manager-modal');
+			let modalContent = document.getElementById('csv-manager-modal-content');
+			modal.classList.add('opacity-0');
+			modalContent.classList.add('scale-95');
+			setTimeout(() => {
+				modal.classList.add('hidden');
+			}, 300);
+		}
 
-document.getElementById('csvFileInput').addEventListener('change', async function(e) {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+		// Groups dogStats by the original CSV filename in the delete modal overlay
+		function renderCsvManagerModalList() {
+			const container = document.getElementById('csv-manager-file-list');
+			if (!window.dogStats || window.dogStats.length === 0) {
+				container.innerHTML = `<p class="text-slate-400 italic text-center py-4">No CSV stats files loaded.</p>`;
+				return;
+			}
 
-    let processedFiles = 0;
-    let totalSkipped = 0;
-    let totalAdded = 0;
+			let fileGroups = {};
+			window.dogStats.forEach((stat, index) => {
+				let fileName = stat.sourceFile || `${stat.track || 'UNKNOWN'}_${stat.date || 'NODATE'}.csv`;
+				let groupKey = fileName;
 
-    let existingRecords = new Set();
-    if (window.dogStats) {
-        window.dogStats.forEach(d => {
-            existingRecords.add(`${d.name}_${d.date}_${d.track}`);
-        });
-    }
+				if (!fileGroups[groupKey]) {
+					fileGroups[groupKey] = {
+						groupKey: groupKey,
+						displayName: fileName,
+						count: 0
+					};
+				}
+				fileGroups[groupKey].count++;
+			});
 
-    for (let file of files) {
-        let inferredDogName = file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ").toUpperCase();
-        
-        const reader = new FileReader();
-        reader.onload = async function(e) {
-            let result = parseHeaderCsvContent(e.target.result, inferredDogName, existingRecords);
-            totalAdded += result.added;
-            totalSkipped += result.skipped;
-            
-            if (result.newRecords && result.newRecords.length > 0) {
-                result.newRecords.forEach(d => window.dogStats.push(d));
-            }
+			let html = '';
+			Object.keys(fileGroups).forEach(groupKey => {
+				let group = fileGroups[groupKey];
 
-            processedFiles++;
-            if (processedFiles === files.length) {
-                document.getElementById('csvFileLabel').innerText = `${window.dogStats.length} stats records loaded`;
-                await sortAndPersistMeetingsObject();
-                renderStatsTable();
-                renderActiveRace();
-                renderBatchSummaryDashboard();
-                
-                if (window.activeRaceKey) {
-                    refreshPredictions(false);
-                }
-                
-                if (totalSkipped > 0) {
-                    let msgType = totalAdded > 0 ? "success" : "error";
-                    showNotification(`Processed ${files.length} file(s). Added ${totalAdded} new records. Skipped ${totalSkipped} duplicates.`, msgType);
-                } else {
-                    showNotification(`Successfully imported ${files.length} CSV file(s). Added ${totalAdded} new records!`, "success");
-                }
+				html += `
+					<div class="bg-slate-50 dark:bg-slate-800/80 p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex justify-between items-center">
+						<div>
+							<span class="font-black text-sm text-slate-900 dark:text-white font-mono tracking-wide block">${group.displayName}</span>
+							<span class="text-xs font-mono text-slate-500 dark:text-slate-400"><strong class="text-slate-700 dark:text-slate-300">${group.count}</strong> linked dog record(s)</span>
+						</div>
+						<button onclick="deleteCsvBatchGroup('${encodeURIComponent(group.groupKey)}')" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-1.5 px-3 rounded shadow transition-colors">
+							Delete File & All Linked Stats
+						</button>
+					</div>
+				`;
+			});
 
-                document.getElementById('csvFileInput').value = "";
-            }
-        };
-        reader.readAsText(file);
-    }
-});
+			container.innerHTML = html;
+		}
 
-function parseHeaderCsvContent(csvText, fallbackDogName, existingRecordsSet) {
-    const rawLines = csvText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-    let newRecords = [];
-    let added = 0;
-    let skipped = 0;
+		// Deletes all dog statistics linked to the original CSV filename
+		async function deleteCsvBatchGroup(encodedGroupKey) {
+			let targetFileName = decodeURIComponent(encodedGroupKey);
+			if (confirm(`Are you sure you want to delete "${targetFileName}" and all its linked dog statistics records?`)) {
+				window.dogStats = window.dogStats.filter(stat => {
+					let fileName = stat.sourceFile || `${stat.track || 'UNKNOWN'}_${stat.date || 'NODATE'}.csv`;
+					return fileName !== targetFileName;
+				});
 
-    if (rawLines.length < 2) return { newRecords, added, skipped };
+				await sortAndPersistMeetingsObject();
+				renderStatsTable();
+				renderActiveRace();
+				renderBatchSummaryDashboard();
+				
+				if (window.activeRaceKey) {
+					refreshPredictions(false);
+				}
 
-    let colMap = {};
-    let currentDogName = fallbackDogName;
-    let currentDogSex = "Unknown";
+				renderCsvManagerModalList();
+				showNotification(`Successfully deleted "${targetFileName}" and all linked stats.`, "success");
+				refreshStorageEstimate();
 
-    for (let i = 0; i < rawLines.length; i++) {
-        let line = rawLines[i];
-        let upperLine = line.toUpperCase();
+				if (window.dogStats.length === 0) {
+					closeCsvManagerModal();
+				}
+			}
+		}
 
-        if (upperLine.startsWith('RACE') || upperLine.startsWith('DOG NAME')) {
-            if (upperLine.startsWith('DOG NAME')) {
-                let headers = line.split(',').map(h => h.replace(/"/g, '').trim().toUpperCase());
-                colMap = {};
-                headers.forEach((h, idx) => {
-                    colMap[h] = idx;
-                });
-            }
-            continue;
-        }
+		// Deletes all accumulated dog stats history
+		async function confirmDeleteAllCsvFiles() {
+			if (confirm("Are you sure you want to clear ALL accumulated dog statistics history?")) {
+				window.dogStats = [];
+				await sortAndPersistMeetingsObject();
 
-        let parts = [];
-        let inQuotes = false;
-        let currentVal = "";
-        for (let char of line) {
-            if (char === '"') {
-                inQuotes = !inQuotes;
-            } else if (char === ',' && !inQuotes) {
-                parts.push(currentVal.trim().replace(/^"|"$/g, ''));
-                currentVal = "";
-            } else {
-                currentVal += char;
-            }
-        }
-        parts.push(currentVal.trim().replace(/^"|"$/g, ''));
+				document.getElementById('csvFileLabel').innerText = "Drag files or click";
+				renderStatsTable();
+				renderActiveRace();
+				renderBatchSummaryDashboard();
+				
+				if (window.activeRaceKey) {
+					refreshPredictions(false);
+				}
 
-        if (parts.length < 5) continue;
+				closeCsvManagerModal();
+				showNotification("All dog statistics history cleared.", "success");
+				refreshStorageEstimate();
+			}
+		}
 
-        let getIdx = (name, fallback) => colMap[name] !== undefined ? colMap[name] : fallback;
-        let nameIdx = getIdx('DOG NAME', 0);
-        let dateIdx = getIdx('DATE', 6);
-        let sexIdx = getIdx('SEX', 1);
-        let plcIdx = getIdx('PLC', 2);
-        let boxIdx = getIdx('BOX', 3);
-        let distIdx = getIdx('DIST', 5);
-        let trackIdx = getIdx('TRACK', 7);
-        let timeIdx = getIdx('TIME', 9);
-        let splitIdx = getIdx('1 SEC', 12);
-        let pirIdx = getIdx('PIR', 15);
+		document.getElementById('csvFileInput').addEventListener('change', async function(e) {
+			const files = e.target.files;
+			if (!files || files.length === 0) return;
 
-        let nameField = parts[nameIdx] !== undefined ? parts[nameIdx] : "";
-        if (nameField !== "" && nameField.toUpperCase() !== "NAN" && nameField !== "UNDEFINED") {
-            let cleanedName = nameField.replace(/^\d+\.\s*/, '').trim();
-            if (cleanedName.length > 1) {
-                currentDogName = cleanedName.toUpperCase();
-            }
-            let sexField = sexIdx !== -1 && parts[sexIdx] ? parts[sexIdx] : "";
-            let combinedHeader = `${currentDogName} ${sexField}`;
-            currentDogSex = extractSex(combinedHeader);
-        }
+			let processedFiles = 0;
+			let totalSkipped = 0;
+			let totalAdded = 0;
 
-        let raceDate = dateIdx !== -1 && parts[dateIdx] ? parts[dateIdx] : "-";
-        let plc = plcIdx !== -1 && parts[plcIdx] ? parts[plcIdx] : "-";
-        let box = boxIdx !== -1 && parts[boxIdx] ? parts[boxIdx] : "-";
-        let dist = distIdx !== -1 && parts[distIdx] ? parts[distIdx] : "";
-        let track = trackIdx !== -1 && parts[trackIdx] ? parts[trackIdx] : "";
-        let time = timeIdx !== -1 && parts[timeIdx] ? parts[timeIdx] : "-";
-        let split1 = splitIdx !== -1 && parts[splitIdx] ? parts[splitIdx] : "-";
-        let pir = pirIdx !== -1 && parts[pirIdx] ? parts[pirIdx] : "-";
+			let existingRecords = new Set();
+			if (window.dogStats) {
+				window.dogStats.forEach(d => {
+					existingRecords.add(`${d.name}_${d.date}_${d.track}_${d.sourceFile || ''}`);
+				});
+			}
 
-        if (plc !== "-" || time !== "-") {
-            let trackUpper = track.toUpperCase();
-            let recordKey = `${currentDogName}_${raceDate}_${trackUpper}`;
+			for (let file of files) {
+				let originalFileName = file.name;
+				let inferredDogName = file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ").toUpperCase();
+				
+				const reader = new FileReader();
+				reader.onload = async function(e) {
+					let result = parseHeaderCsvContent(e.target.result, inferredDogName, existingRecords, originalFileName);
+					totalAdded += result.added;
+					totalSkipped += result.skipped;
+					
+					if (result.newRecords && result.newRecords.length > 0) {
+						result.newRecords.forEach(d => window.dogStats.push(d));
+					}
 
-            if (existingRecordsSet && existingRecordsSet.has(recordKey)) {
-                skipped++;
-            } else {
-                newRecords.push({
-                    name: currentDogName,
-                    date: raceDate,
-                    sex: currentDogSex,
-                    plc: plc,
-                    box: String(box).trim(),
-                    dist: dist,
-                    track: trackUpper,
-                    pir: pir,
-                    split1: split1,
-                    time: time
-                });
-                added++;
-                
-                if (existingRecordsSet) {
-                    existingRecordsSet.add(recordKey);
-                }
-            }
-        }
-    }
-    return { newRecords, added, skipped };
-}
+					processedFiles++;
+					if (processedFiles === files.length) {
+						document.getElementById('csvFileLabel').innerText = `${window.dogStats.length} stats records loaded`;
+						await sortAndPersistMeetingsObject();
+						renderStatsTable();
+						renderActiveRace();
+						renderBatchSummaryDashboard();
+						
+						if (window.activeRaceKey) {
+							refreshPredictions(false);
+						}
+						
+						if (totalSkipped > 0) {
+							let msgType = totalAdded > 0 ? "success" : "error";
+							showNotification(`Processed ${files.length} file(s). Added ${totalAdded} new records. Skipped ${totalSkipped} duplicates.`, msgType);
+						} else {
+							showNotification(`Successfully imported ${files.length} CSV file(s). Added ${totalAdded} new records!`, "success");
+						}
+
+						document.getElementById('csvFileInput').value = "";
+					}
+				};
+				reader.readAsText(file);
+			}
+		});
+
+	function parseHeaderCsvContent(csvText, fallbackDogName, existingRecordsSet, originalFileName = "Manual_Import.csv") {
+		const rawLines = csvText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+		let newRecords = [];
+		let added = 0;
+		let skipped = 0;
+
+		if (rawLines.length < 2) return { newRecords, added, skipped };
+
+		let colMap = {};
+		let currentDogName = fallbackDogName;
+		let currentDogSex = "Unknown";
+
+		for (let i = 0; i < rawLines.length; i++) {
+			let line = rawLines[i];
+			let upperLine = line.toUpperCase();
+
+			if (upperLine.startsWith('RACE') || upperLine.startsWith('DOG NAME')) {
+				if (upperLine.startsWith('DOG NAME')) {
+					let headers = line.split(',').map(h => h.replace(/"/g, '').trim().toUpperCase());
+					colMap = {};
+					headers.forEach((h, idx) => {
+						colMap[h] = idx;
+					});
+				}
+				continue;
+			}
+
+			let parts = [];
+			let inQuotes = false;
+			let currentVal = "";
+			for (let char of line) {
+				if (char === '"') {
+					inQuotes = !inQuotes;
+				} else if (char === ',' && !inQuotes) {
+					parts.push(currentVal.trim().replace(/^"|"$/g, ''));
+					currentVal = "";
+				} else {
+					currentVal += char;
+				}
+			}
+			parts.push(currentVal.trim().replace(/^"|"$/g, ''));
+
+			if (parts.length < 5) continue;
+
+			let getIdx = (name, fallback) => colMap[name] !== undefined ? colMap[name] : fallback;
+			let nameIdx = getIdx('DOG NAME', 0);
+			let dateIdx = getIdx('DATE', 6);
+			let sexIdx = getIdx('SEX', 1);
+			let plcIdx = getIdx('PLC', 2);
+			let boxIdx = getIdx('BOX', 3);
+			let distIdx = getIdx('DIST', 5);
+			let trackIdx = getIdx('TRACK', 7);
+			let timeIdx = getIdx('TIME', 9);
+			let splitIdx = getIdx('1 SEC', 12);
+			let pirIdx = getIdx('PIR', 15);
+
+			let nameField = parts[nameIdx] !== undefined ? parts[nameIdx] : "";
+			if (nameField !== "" && nameField.toUpperCase() !== "NAN" && nameField !== "UNDEFINED") {
+				let cleanedName = nameField.replace(/^\d+\.\s*/, '').trim();
+				if (cleanedName.length > 1) {
+					currentDogName = cleanedName.toUpperCase();
+				}
+				let sexField = sexIdx !== -1 && parts[sexIdx] ? parts[sexIdx] : "";
+				let combinedHeader = `${currentDogName} ${sexField}`;
+				currentDogSex = extractSex(combinedHeader);
+			}
+
+			let raceDate = dateIdx !== -1 && parts[dateIdx] ? parts[dateIdx] : "-";
+			let plc = plcIdx !== -1 && parts[plcIdx] ? parts[plcIdx] : "-";
+			let box = boxIdx !== -1 && parts[boxIdx] ? parts[boxIdx] : "-";
+			let dist = distIdx !== -1 && parts[distIdx] ? parts[distIdx] : "";
+			let track = trackIdx !== -1 && parts[trackIdx] ? parts[trackIdx] : "";
+			let time = timeIdx !== -1 && parts[timeIdx] ? parts[timeIdx] : "-";
+			let split1 = splitIdx !== -1 && parts[splitIdx] ? parts[splitIdx] : "-";
+			let pir = pirIdx !== -1 && parts[pirIdx] ? parts[pirIdx] : "-";
+
+			if (plc !== "-" || time !== "-") {
+				let trackUpper = track.toUpperCase();
+				let recordKey = `${currentDogName}_${raceDate}_${trackUpper}_${originalFileName}`;
+
+				if (existingRecordsSet && existingRecordsSet.has(recordKey)) {
+					skipped++;
+				} else {
+					newRecords.push({
+						name: currentDogName,
+						date: raceDate,
+						sex: currentDogSex,
+						plc: plc,
+						box: String(box).trim(),
+						dist: dist,
+						track: trackUpper,
+						pir: pir,
+						split1: split1,
+						time: time,
+						sourceFile: originalFileName
+					});
+					added++;
+					
+					if (existingRecordsSet) {
+						existingRecordsSet.add(recordKey);
+					}
+				}
+			}
+		}
+		return { newRecords, added, skipped };
+	}
 
 async function submitManualStatRow() {
     let name = document.getElementById('m-name').value.trim().toUpperCase();
