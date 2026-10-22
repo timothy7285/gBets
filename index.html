@@ -100,13 +100,15 @@
             
             <!-- Desktop Tab Header -->
             <div class="desktop-tab-header hidden md:flex border-b border-slate-300 dark:border-slate-800 mb-4 overflow-x-auto flex-shrink-0">
-                <button class="tab-btn px-4 py-2 font-bold text-slate-900 dark:text-white border-b-2 border-slate-900 dark:border-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'race-details')">Race Details</button>
-                <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'dog-stats')">Dog Statistics</button>
-                <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'batch-summary-tab')">Meeting Summary</button>
-                <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'predictions')">Analysis & Predictions</button>
-                <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'saved-tab')">Saved Predictions</button>
-                <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'settings-tab')">⚙️ Settings</button>
-                <button class="tab-btn px-4 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'app-info')">App Info</button>
+                <button class="tab-btn px-2 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'race-details')">🏁Race Details</button>
+                <button class="tab-btn px-2 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'dog-stats')">📊Dog Statistics</button>
+                <button class="tab-btn px-2 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'batch-summary-tab')">⚡Meeting Summary</button>
+                <button class="tab-btn px-2 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'predictions')">🎯Analysis & Predictions</button>
+                <button class="tab-btn px-2 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'saved-tab')">💾Saved Predictions</button>
+                <button class="tab-btn px-2 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'betting-tab')">💰User Bets</button>
+                <button class="tab-btn px-2 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'settings-tab')">⚙️Settings</button>
+                <button class="tab-btn px-2 py-2 font-medium text-slate-500 dark:text-slate-400 border-b-2 border-transparent hover:text-slate-900 dark:hover:text-white focus:outline-none whitespace-nowrap transition-colors text-sm" onclick="openTab(event, 'info')">ℹ️Info</button>
+                </button>
             </div>
 			
 		<!-- CSV Stats Management Modal -->
@@ -417,11 +419,139 @@
                 </div>
             </div>
 
-            <!-- Tab 6: Settings -->
+            <!-- Tab 6: User Betting Tab -->
+            <div id="betting-tab" class="tab-content bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-lg shadow-sm flex-grow overflow-auto space-y-6 transition-colors duration-200 text-xs sm:text-sm">              
+				<!-- Wallet & Bankroll Dashboard -->
+				<div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+					<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+						<div>
+							<h2 class="text-xl font-black text-slate-900 dark:text-white">Credit Wallet & Bankroll</h2>
+							<p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Manage your betting capital, active stakes, and net profits.</p>
+						</div>
+						<div class="flex items-center gap-2 flex-wrap">
+							<button onclick="openTransactionModal()" class="bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors shadow-sm">
+								📊 Transactions
+							</button>          
+							<button onclick="openWalletModal()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 px-4 rounded shadow transition-colors">
+								💳 Deposit / Withdraw
+							</button>
+							<button onclick="resetWalletData()" class="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 text-xs font-bold py-2 px-4 rounded shadow transition-colors">
+								Reset Wallet
+							</button>
+						</div>
+					</div>
+
+					<!-- Track & Date Filter Bar for User Bets (Single Clean Instance) -->
+					<div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700 my-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+						<div class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+							<div class="flex items-center gap-1.5 flex-1">
+								<label class="font-bold uppercase text-[10px]">Track:</label>
+								<select id="filter-user-track-select" onchange="populateUserBetFilterDropdowns(); renderBettingTab();" class="text-xs px-2 py-1.5 border rounded bg-white dark:bg-slate-900 font-semibold flex-1">
+									<option value="">All Tracks</option>
+								</select>
+							</div>
+							<div class="flex items-center gap-1.5 flex-1">
+								<label class="font-bold uppercase text-[10px]">Date:</label>
+								<select id="filter-user-date-select" onchange="renderBettingTab()" class="text-xs px-2 py-1.5 border rounded bg-white dark:bg-slate-900 font-semibold flex-1">
+									<option value="">All Dates</option>
+								</select>
+							</div>
+						</div>
+						<button onclick="resetUserBetFilters()" class="text-xs font-bold text-slate-500 underline">Reset Filters</button>
+					</div>
+
+					<div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4">
+						<div class="bg-slate-50 dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
+							<span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Available Balance</span>
+							<span id="wallet-balance-display" class="text-xl font-black font-mono text-slate-900 dark:text-white">$100.00</span>
+						</div>
+						<div class="bg-slate-50 dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
+							<span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Active Staked</span>
+							<span id="wallet-staked-display" class="text-xl font-black font-mono text-amber-600 dark:text-amber-400">$0.00</span>
+						</div>
+						<div class="bg-slate-50 dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
+							<span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Net Profit / Loss</span>
+							<span id="wallet-profit-display" class="text-xl font-black font-mono text-green-600 dark:text-green-400">$0.00</span>
+						</div>
+						<div class="bg-slate-50 dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
+							<span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Betting ROI</span>
+							<span id="wallet-roi-display" class="text-xl font-black font-mono text-purple-600 dark:text-purple-400">0.0%</span>
+						</div>
+					</div>
+
+					<!-- Strike Rates Sub-Grid -->
+					<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+						<div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex justify-between items-center text-xs">
+							<span class="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Win Strike Rate</span>
+							<span id="wallet-win-strike-display" class="font-mono font-bold text-sm text-green-600 dark:text-green-400">0.0% (0/0)</span>
+						</div>
+						<div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex justify-between items-center text-xs">
+							<span class="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Place Strike Rate</span>
+							<span id="wallet-place-strike-display" class="font-mono font-bold text-sm text-blue-600 dark:text-blue-400">0.0% (0/0)</span>
+						</div>
+						<div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex justify-between items-center text-xs">
+							<span class="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Combined Strike</span>
+							<span id="wallet-combined-strike-display" class="font-mono font-bold text-sm text-purple-600 dark:text-purple-400">0.0% (0/0)</span>
+						</div>
+					</div>
+				</div>
+				
+                <!-- Active Bets Section -->
+                <div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                    <h3 class="font-black text-base text-slate-900 dark:text-white mb-4">Active / Open Bets</h3>
+                    <div id="active-bets-container" class="space-y-3">
+                        <p class="text-xs text-slate-400 italic">No active bets placed. Click "Bet" on any runner in the Analysis tab to place a wager.</p>
+                    </div>
+                </div>
+
+                <!-- Settled Betting History -->
+                <div class="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="font-black text-base text-slate-900 dark:text-white">Settled Betting History</h3>
+                        <button onclick="clearSettledBets()" class="text-xs text-red-600 hover:text-red-800 font-bold">Clear History</button>
+                    </div>
+                    <div id="settled-bets-container" class="space-y-3">
+                        <p class="text-xs text-slate-400 italic">No settled bets recorded yet.</p>
+                    </div>
+                </div>
+            </div>
+			
+			<!-- Transaction History Modal Overlay -->
+			<div id="transaction-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
+				<div id="transaction-modal-content" class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-2xl mx-4 p-6 shadow-2xl transform scale-95 transition-transform duration-300 flex flex-col max-h-[85vh]">
+					
+					<!-- Modal Header -->
+					<div class="flex justify-between items-center pb-4 border-b border-slate-100 dark:border-slate-800">
+						<div>
+							<h3 class="text-base font-black text-slate-900 dark:text-white uppercase tracking-wider">Transaction Ledger</h3>
+							<span class="text-xs text-slate-400 font-mono">Complete audit trail of deposits, withdrawals, stakes, and payouts</span>
+						</div>
+						<button onclick="closeTransactionModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg font-bold p-1">&times;</button>
+					</div>
+
+					<!-- Modal Body (Scrollable List) -->
+					<div id="transaction-history-container" class="space-y-2 overflow-y-auto pr-1 my-4 flex-1">
+						<!-- Transactions rendered dynamically -->
+					</div>
+
+					<!-- Modal Footer -->
+					<div class="flex justify-between items-center pt-4 border-t border-slate-100 dark:border-slate-800">
+						<button onclick="clearTransactionHistory()" class="text-xs text-red-600 hover:text-red-800 font-bold px-3 py-1.5 rounded border border-red-200 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors">Clear Ledger</button>
+						<button onclick="closeTransactionModal()" class="bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 text-white text-xs font-bold px-4 py-2 rounded-lg shadow transition-colors">Close</button>
+					</div>
+
+				</div>
+			</div>
+
+            <!-- Tab 7: Settings -->
             <div id="settings-tab" class="tab-content bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-lg shadow-sm flex-grow overflow-auto space-y-4 transition-colors duration-200 text-xs sm:text-sm">
                 <h2 class="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight mb-1">⚙️ Live Sync & Portability</h2>
                 <p class="text-slate-600 dark:text-slate-300 text-xs">Connect a master database file for real-time auto-saving or export/import snapshots.</p>
-
+				
+				<span id="diag-browser"></span>
+				<span id="diag-storage"></span>
+				<span id="diag-audit"></span>
+							
                 <div class="bg-blue-50 dark:bg-blue-950/40 p-3.5 rounded-lg border border-blue-200 dark:border-blue-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <div class="flex items-center gap-2.5">
                         <div id="live-status-symbol" class="w-3.5 h-3.5 rounded-full bg-red-500 flex-shrink-0 shadow-sm" title="Disconnected"></div>
@@ -476,18 +606,7 @@
                         </div>
                     </div>
                 </div>
-
-                <div class="bg-slate-50 dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
-                    <div class="flex justify-between items-center mb-2">
-                        <h3 class="font-bold text-slate-900 dark:text-white text-xs sm:text-sm">📊 Storage Health</h3>
-                        <span id="storage-usage-badge" class="text-[11px] font-mono bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded font-bold">Calculating...</span>
-                    </div>
-                    <div class="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden mb-2">
-                        <div id="storage-progress-bar" class="bg-blue-600 h-2 rounded-full" style="width: 0%"></div>
-                    </div>
-                    <button onclick="refreshStorageEstimate()" class="bg-slate-700 text-white text-[11px] font-bold py-1 px-2.5 rounded">Refresh Storage Estimate</button>
-                </div>
-
+            
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <button onclick="exportDatabaseSnapshot()" class="bg-slate-800 text-white font-bold py-2.5 px-3 rounded shadow text-xs">💾 Download Snapshot (.json)</button>
                     <input type="file" id="importSnapshotFileInput" accept=".json" onchange="importDatabaseSnapshot(event)" class="hidden"/>
@@ -495,15 +614,15 @@
                 </div>
             </div>
 
-            <!-- Tab 7: App Info -->
-            <div id="app-info" class="tab-content bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-xl shadow-sm flex-grow overflow-auto space-y-8 transition-colors duration-200">
+			<!-- Tab 8: App Info -->
+            <div id="info" class="tab-content bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-xl shadow-sm flex-grow overflow-auto space-y-8 transition-colors duration-200">
                 
                 <!-- Header Hero Section -->
                 <div class="border-b border-slate-200 dark:border-slate-800 pb-6">
                     <div class="inline-block px-3 py-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-full text-xs font-bold uppercase tracking-wider mb-3">Comprehensive Architecture & Handbook Guide</div>
                     <h2 class="text-3xl font-black text-slate-900 dark:text-white tracking-tight">gBet Greyhound Race Predictor</h2>
                     <p class="text-slate-600 dark:text-slate-300 mt-2 text-sm sm:text-base leading-relaxed">
-                        An advanced quantitative handicapping and race analysis platform designed to automate multi-variable modeling, live market sentiment analysis, granular database storage, and complete Return on Investment (ROI) tracking.
+                        An advanced quantitative handicapping and race analysis platform designed to automate multi-variable modeling, live market sentiment analysis, granular database storage, bankroll management, and complete Return on Investment (ROI) tracking.
                     </p>
                 </div>
 
@@ -520,7 +639,7 @@
                                 <span>⚡</span> Quick-Jump Ribbon & Menu
                             </div>
                             <p class="text-slate-600 dark:text-slate-300 leading-relaxed">
-                                Accordion-style vertical sidebar grouping meetings by track and date. Offers instant one-click navigation to streamline workflows and optimize screen space.
+                                Accordion-style vertical sidebar grouping meetings by track and date. Offers instant one-click navigation and individual/bulk meeting deletion controls.
                             </p>
                         </div>
 
@@ -529,7 +648,7 @@
                                 <span>🟢</span> Live Status Indicator Legend
                             </div>
                             <p class="text-slate-600 dark:text-slate-300 leading-relaxed">
-                                Real-time indicators (<span class="text-green-500 font-bold">Computed</span> 🟢, <span class="text-blue-500 font-bold">Settled</span> 🎯, <span class="text-slate-400 font-bold">Neutral</span> ⚪) provide immediate feedback on race states.
+                                Real-time indicators (<span class="text-green-500 font-bold">Computed</span> 🟢, <span class="text-blue-500 font-bold">Settled</span> 🎯, <span class="text-slate-400 font-bold">Neutral</span> ⚪) provide immediate feedback on race states and disk/cloud sync health.
                             </p>
                         </div>
 
@@ -538,7 +657,7 @@
                                 <span>🎟</span> Modals & Overlay Interfaces
                             </div>
                             <p class="text-slate-600 dark:text-slate-300 leading-relaxed">
-                                Pop-up overlay sheets (such as the Saved Prediction Inspector) let you review deep historical breakdowns and model weight configurations without losing context.
+                                Pop-up overlay sheets (such as the Saved Prediction Inspector, CSV Batch Manager, and Transaction Ledger) let you review deep historical breakdowns without losing context.
                             </p>
                         </div>
 
@@ -563,14 +682,14 @@
                         <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-1.5">
                             <strong class="text-slate-900 dark:text-white text-sm block">📊 Dog Statistics Tab</strong>
                             <p class="text-slate-600 dark:text-slate-300">
-                                Extensive performance repository supporting CSV bulk imports (from The Print Hub), manual run/trial drawers, inline editing, deletion, and search filters.
+                                Extensive performance repository supporting CSV bulk imports (from The Print Hub), manual run/trial drawers, inline editing, file deletion modals, and search filters.
                             </p>
                         </div>
 
                         <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-1.5">
                             <strong class="text-slate-900 dark:text-white text-sm block">⚡ Meeting Summary Dashboard</strong>
                             <p class="text-slate-600 dark:text-slate-300">
-                                Concise batch overview card grid displaying top picks, distances, and confidence ratings sorted alphabetically by track and ascending race number.
+                                Concise batch overview card grid displaying top picks, distances, and confidence ratings sorted alphabetically by track and ascending race number with filter bars.
                             </p>
                         </div>
 
@@ -584,14 +703,21 @@
                         <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-1.5">
                             <strong class="text-slate-900 dark:text-white text-sm block">🎯 Saved Predictions & ROI</strong>
                             <p class="text-slate-600 dark:text-slate-300">
-                                Stores past analyses, actual podium placers, and payouts. Calculates automated win, place, and combined strike rates alongside financial ROI performance.
+                                Stores past analyses, podium placers, and payouts. Calculates automated win, place, and combined strike rates alongside financial ROI performance and CSV history imports/exports.
+                            </p>
+                        </div>
+
+                        <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-1.5">
+                            <strong class="text-slate-900 dark:text-white text-sm block">💰 User Betting & Wallet Tab</strong>
+                            <p class="text-slate-600 dark:text-slate-300">
+                                Manages credit bankrolls, deposits/withdrawals, active stakes, settled bet history with manual odds/payout overrides, and complete transaction audit ledgers.
                             </p>
                         </div>
 
                         <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-1.5">
                             <strong class="text-slate-900 dark:text-white text-sm block">⚙️ Settings & Database Tab</strong>
                             <p class="text-slate-600 dark:text-slate-300">
-                                Houses live file system disk syncing, JSON manual USB snapshots, browser storage health estimation, and selective data maintenance tools.
+                                Houses live file system disk syncing, JSON manual USB snapshots, distance preset customizers, browser storage health diagnostics, and selective maintenance tools.
                             </p>
                         </div>
 
@@ -605,7 +731,7 @@
                         Robust Database Architecture & Exports/Imports
                     </h3>
                     <p class="text-sm text-slate-600 dark:text-slate-300">
-                        The application leverages a high-performance IndexedDB storage architecture coupled with direct File System Access API streaming, ensuring rapid entity retrieval and zero data loss.
+                        The application leverages a high-performance IndexedDB storage architecture coupled with Firebase Firestore cloud syncing and direct File System Access API streaming, ensuring rapid entity retrieval and zero data loss.
                     </p>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                         <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1">
@@ -617,7 +743,7 @@
                         <div class="bg-slate-50 dark:bg-slate-800/70 p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1">
                             <strong class="text-slate-900 dark:text-white text-sm">📤 Intuitive Data Export</strong>
                             <p class="text-slate-600 dark:text-slate-300 leading-relaxed">
-                                Export complete historical prediction datasets, betting performance logs into structured CSV spreadsheets, or portable JSON database snapshots for cross-device USB transport.
+                                Export complete historical prediction datasets, betting performance logs into structured CSV spreadsheets, or portable JSON database snapshots for cross-device transport.
                             </p>
                         </div>
                     </div>
@@ -677,9 +803,17 @@
             <span class="text-lg">💾</span>
             <span class="text-[10px] mt-0.5">Saved</span>
         </button>
+        <button onclick="openTab(event, 'betting-tab'); highlightBottomNav(this);" class="nav-icon-btn flex flex-col items-center justify-center flex-1 h-full text-slate-500 dark:text-slate-400 font-medium">
+            <span class="text-lg">💰</span>
+            <span class="text-[10px] mt-0.5">Bets</span>
+        </button>
         <button onclick="openTab(event, 'settings-tab'); highlightBottomNav(this);" class="nav-icon-btn flex flex-col items-center justify-center flex-1 h-full text-slate-500 dark:text-slate-400 font-medium">
             <span class="text-lg">⚙️</span>
             <span class="text-[10px] mt-0.5">Settings</span>
+        </button>
+		<button onclick="openTab(event, 'app-info'); highlightBottomNav(this);" class="nav-icon-btn flex flex-col items-center justify-center flex-1 h-full text-slate-500 dark:text-slate-400 font-medium">
+            <span class="text-lg">ℹ️</span>
+            <span class="text-[10px] mt-0.5">Info</span>
         </button>
     </nav>
 
@@ -700,6 +834,81 @@
             <div class="p-4 overflow-y-auto flex-grow bg-slate-100 dark:bg-slate-950">
                 <h4 class="text-sm font-bold mb-3 text-slate-900 dark:text-white">Archived Runner Analysis</h4>
                 <ul id="modal-runner-analysis-list" class="space-y-2.5 text-xs sm:text-sm text-slate-700 dark:text-slate-300"></ul>
+            </div>
+        </div>
+    </div>
+
+  	<!-- Place Bet Modal -->
+	<div id="place-bet-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+		<div id="place-bet-modal-content" class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 transform scale-95 transition-transform duration-300">
+			<div class="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+				<h3 class="text-base font-black text-slate-900 dark:text-white uppercase tracking-wider">Win + Place bet</h3>
+				<button onclick="closePlaceBetModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold text-lg">&times;</button>
+			</div>
+			
+			<input type="hidden" id="bet-modal-dog-name">
+			<input type="hidden" id="bet-modal-track-name">
+			<input type="hidden" id="bet-modal-race-num">
+			<input type="hidden" id="bet-modal-windiv">
+			<input type="hidden" id="bet-modal-placediv">
+
+			<div class="space-y-4 text-sm">
+				<div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+					<span class="block text-xs text-slate-400 uppercase font-bold">Selected Runner</span>
+					<span id="bet-lbl-runner" class="font-black text-slate-900 dark:text-white text-base">--</span>
+					<span id="bet-lbl-meeting" class="block text-xs font-mono text-slate-500 mt-0.5">--</span>
+				</div>
+
+				<div class="grid grid-cols-2 gap-3">
+					<div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+						<label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Win Stake ($)</label>
+						<input type="number" id="bet-modal-win-stake" min="0" step="1" oninput="updateCombinedBetCalculation()" class="w-full text-sm px-3 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none">
+						<span class="block text-[11px] text-slate-500 mt-1">Est. Return: <strong id="bet-lbl-win-return" class="text-green-600 dark:text-green-400 font-mono">$0.00</strong></span>
+					</div>
+					<div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+						<label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Place Stake ($)</label>
+						<input type="number" id="bet-modal-place-stake" min="0" step="1" oninput="updateCombinedBetCalculation()" class="w-full text-sm px-3 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none">
+						<span class="block text-[11px] text-slate-500 mt-1">Est. Return: <strong id="bet-lbl-place-return" class="text-blue-600 dark:text-blue-400 font-mono">$0.00</strong></span>
+					</div>
+				</div>
+
+				<div class="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+					<button onclick="closePlaceBetModal()" class="px-4 py-2 rounded text-xs font-bold bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors">Cancel</button>
+					<!-- Inside your Place Bet Modal HTML -->
+					<button onclick="confirmAndPlaceBet()" type="button" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 px-4 rounded-lg shadow transition-colors text-xs">
+						Confirm & Place Wager
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+    <!-- Wallet Deposit/Withdraw Modal -->
+    <div id="wallet-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
+        <div id="wallet-modal-content" class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden transform scale-95 transition-transform duration-300 flex flex-col">
+            <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50">
+                <h3 class="font-black text-lg text-slate-900 dark:text-white">Manage Wallet Funds</h3>
+                <button onclick="closeWalletModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold text-lg px-2 py-1 rounded transition-colors">&times;</button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Action Type:</label>
+                    <select id="wallet-action-type" class="w-full text-xs px-3 py-2 border rounded bg-white dark:bg-slate-900 font-semibold focus:outline-none">
+                        <option value="deposit">Deposit Funds</option>
+                        <option value="withdraw">Withdraw Funds</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Amount ($):</label>
+                    <input type="number" id="wallet-action-amount" value="100" min="1" step="10" class="w-full text-xs px-3 py-2 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none"/>
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-2 bg-slate-50 dark:bg-slate-800/50">
+                <button onclick="closeWalletModal()" class="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 text-xs font-bold py-2 px-4 rounded transition-colors">Cancel</button>
+                <!-- Inside your Wallet Modal HTML -->
+				<button onclick="submitWalletAction()" type="button" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-lg shadow transition-colors text-xs">
+					Confirm Transaction
+				</button>
             </div>
         </div>
     </div>

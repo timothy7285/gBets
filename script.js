@@ -1,9 +1,30 @@
-window.allRaceMeetings = {};
-window.activeRaceKey = "";
-window.currentComputedResult = null;
-window.computedPredictionsCache = {};
-window.dogStats = [];
+// --- MASTER GLOBAL STATE INITIALIZATION ---
+window.allRaceMeetings = window.allRaceMeetings || {};
+window.activeRaceKey = window.activeRaceKey || "";
+window.currentComputedResult = window.currentComputedResult || null;
+window.computedPredictionsCache = window.computedPredictionsCache || {};
+window.dogStats = window.dogStats || [];
+
+// Master consolidated savedPredictions array initialization
 window.savedPredictions = [];
+try {
+    let stored = localStorage.getItem('savedPredictions');
+    if (stored) {
+        let parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) window.savedPredictions = parsed;
+    }
+} catch (e) {
+    window.savedPredictions = [];
+}
+
+window.userWallet = {
+    balance: 0.00,
+    staked: 0.00,
+    profit: 0.00,
+    transactions: [] // Added to store transaction logs
+};
+window.activeBets = [];
+window.settledBets = [];
 
 window.customPresets = {
     sprint: { windiv: 0.3, besttime: 0.4, avgtime: 0.4, best1sec: 0.8, avg1sec: 0.7, earlypos: 0.6, closinggain: 0.1, boxbias: 0.7 },
@@ -11,7 +32,6 @@ window.customPresets = {
 };
 
 window.expandedRibbonGroups = new Set();
-
 window.liveFileHandle = null;
 window.cachedFileHandleReference = null;
 window.sessionImportCount = 0;
@@ -78,6 +98,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         let storedCache = null;
         let storedSavedPredictions = null;
         let storedCustomPresets = null;
+        let storedWallet = null;
+        let storedActiveBets = null;
+        let storedSettledBets = null;
         let storedHandle = null;
 
         let loadedFromFirebase = false;
@@ -93,6 +116,9 @@ window.addEventListener('DOMContentLoaded', async () => {
                     if (parsed.cache) storedCache = parsed.cache;
                     if (parsed.savedPredictions) storedSavedPredictions = parsed.savedPredictions;
                     if (parsed.customPresets) storedCustomPresets = parsed.customPresets;
+                    if (parsed.userWallet) storedWallet = parsed.userWallet;
+                    if (parsed.activeBets) storedActiveBets = parsed.activeBets;
+                    if (parsed.settledBets) storedSettledBets = parsed.settledBets;
                     loadedFromFirebase = true;
                     setLiveStatusSymbol('connected');
                     document.getElementById('live-file-status').innerText = "Connected & Cloud-Syncing with Firebase Firestore";
@@ -116,6 +142,9 @@ window.addEventListener('DOMContentLoaded', async () => {
                     storedCache = await getVal('gbet_computed_cache');
                     storedSavedPredictions = await getVal('gbet_session_saved_predictions');
                     storedCustomPresets = await getVal('gbet_session_custom_presets');
+                    storedWallet = await getVal('gbet_session_wallet');
+                    storedActiveBets = await getVal('gbet_session_active_bets');
+                    storedSettledBets = await getVal('gbet_session_settled_bets');
                     storedHandle = await getVal('gbet_live_file_handle');
                 }
             } catch (err) {
@@ -128,8 +157,20 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (storedCache) window.computedPredictionsCache = storedCache;
         if (storedSavedPredictions) window.savedPredictions = storedSavedPredictions;
         if (storedCustomPresets) window.customPresets = storedCustomPresets;
+        if (storedWallet) window.userWallet = storedWallet;
+        if (storedActiveBets) window.activeBets = storedActiveBets;
+        if (storedSettledBets) window.settledBets = storedSettledBets;
+
+		if (window.dogStats && window.dogStats.length > 0) {
+					window.dogStats.forEach(stat => {
+						if (!stat.sourceFile || stat.sourceFile.trim() === "") {
+							stat.sourceFile = stat.track ? `${stat.track}_Imports.csv` : "Manual_Or_Legacy_Stats.csv";
+						}
+					});
+				}
 
         populatePresetSettingsUI();
+        renderBettingTab();
 
         if (storedHandle && !loadedFromFirebase) {
             window.cachedFileHandleReference = storedHandle;
@@ -146,10 +187,16 @@ window.addEventListener('DOMContentLoaded', async () => {
                     if (parsed.cache) window.computedPredictionsCache = parsed.cache;
                     if (parsed.savedPredictions) window.savedPredictions = parsed.savedPredictions;
                     if (parsed.customPresets) window.customPresets = parsed.customPresets;
+                    if (parsed.userWallet) window.userWallet = parsed.userWallet;
+                    if (parsed.activeBets) window.activeBets = parsed.activeBets;
+                    if (parsed.settledBets) window.settledBets = parsed.settledBets;
                     if (parsed.activeKey && window.allRaceMeetings[parsed.activeKey]) {
                         window.activeRaceKey = parsed.activeKey;
                     }
                     populatePresetSettingsUI();
+                    renderBettingTab();
+					populateSavedFilterDropdowns();
+					renderSavedPredictions();
 
                     document.getElementById('live-file-status').innerText = `Auto-Connected & Live-Syncing: ${fileData.name}`;
                     document.getElementById('header-live-file-status').innerText = `Live: ${fileData.name}`;
@@ -190,7 +237,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
 
         runDiagnosticsInspector();
-        refreshStorageEstimate();
+     
     } catch (err) {
         console.error("Critical boot error:", err);
     }
@@ -244,23 +291,6 @@ function runDiagnosticsInspector() {
     document.getElementById('diag-audit').innerText = lastAudit;
 }
 
-async function refreshStorageEstimate() {
-    if (navigator.storage && navigator.storage.estimate) {
-        try {
-            let estimate = await navigator.storage.estimate();
-            let usageMB = (estimate.usage / (1024 * 1024)).toFixed(2);
-            let quotaMB = (estimate.quota / (1024 * 1024)).toFixed(0);
-            let percent = quotaMB > 0 ? ((estimate.usage / estimate.quota) * 100).toFixed(1) : 0;
-
-            document.getElementById('storage-usage-badge').innerText = `${usageMB} MB / ${quotaMB} MB (${percent}%)`;
-            document.getElementById('storage-details-text').innerText = `Using ${usageMB} MB of estimated ${quotaMB} MB quota in browser IndexedDB.`;
-            document.getElementById('storage-progress-bar').style.width = `${Math.min(percent, 100)}%`;
-        } catch (err) {
-            console.warn("Storage estimate failed:", err);
-        }
-    }
-}
-
 async function purgeOldMeetings() {
     let keys = Object.keys(window.allRaceMeetings);
     if (keys.length === 0) {
@@ -289,8 +319,7 @@ async function purgeOldMeetings() {
         showNotification(`Successfully purged ${purgedCount} meeting(s) older than 30 days.`, "success");
     } else {
         showNotification("No meetings older than 30 days were found.");
-    }
-    refreshStorageEstimate();
+    } 
 }
 
 function resetDefaultWeights() {
@@ -341,7 +370,6 @@ async function clearPredictionCache() {
         window.computedPredictionsCache = {};
         await sortAndPersistMeetingsObject();
         showNotification("Computed analysis cache cleared successfully.", "success");
-        refreshStorageEstimate();
     }
 }
 
@@ -398,6 +426,9 @@ async function reconnectStoredLiveFile() {
             if (parsed.cache) window.computedPredictionsCache = parsed.cache;
             if (parsed.savedPredictions) window.savedPredictions = parsed.savedPredictions;
             if (parsed.customPresets) window.customPresets = parsed.customPresets;
+            if (parsed.userWallet) window.userWallet = parsed.userWallet;
+            if (parsed.activeBets) window.activeBets = parsed.activeBets;
+            if (parsed.settledBets) window.settledBets = parsed.settledBets;
             if (parsed.activeKey && window.allRaceMeetings[parsed.activeKey]) {
                 window.activeRaceKey = parsed.activeKey;
             } else {
@@ -405,6 +436,7 @@ async function reconnectStoredLiveFile() {
                 if (keys.length > 0) window.activeRaceKey = keys[0];
             }
             populatePresetSettingsUI();
+            renderBettingTab();
 
             await sortAndPersistMeetingsObject();
             updateAllUIComponents();
@@ -465,6 +497,9 @@ async function connectLiveDatabaseFile() {
         if (parsed.cache) window.computedPredictionsCache = parsed.cache;
         if (parsed.savedPredictions) window.savedPredictions = parsed.savedPredictions;
         if (parsed.customPresets) window.customPresets = parsed.customPresets;
+        if (parsed.userWallet) window.userWallet = parsed.userWallet;
+        if (parsed.activeBets) window.activeBets = parsed.activeBets;
+        if (parsed.settledBets) window.settledBets = parsed.settledBets;
         if (parsed.activeKey && window.allRaceMeetings[parsed.activeKey]) {
             window.activeRaceKey = parsed.activeKey;
         } else {
@@ -472,6 +507,7 @@ async function connectLiveDatabaseFile() {
             if (keys.length > 0) window.activeRaceKey = keys[0];
         }
         populatePresetSettingsUI();
+        renderBettingTab();
 
         await sortAndPersistMeetingsObject();
         updateAllUIComponents();
@@ -507,6 +543,9 @@ async function writeToLiveFileIfConnected() {
             cache: window.computedPredictionsCache,
             savedPredictions: window.savedPredictions,
             customPresets: window.customPresets,
+            userWallet: window.userWallet,
+            activeBets: window.activeBets,
+            settledBets: window.settledBets,
             exportDate: new Date().toISOString()
         };
         const writable = await window.liveFileHandle.createWritable();
@@ -530,6 +569,9 @@ async function exportDatabaseSnapshot() {
         cache: window.computedPredictionsCache,
         savedPredictions: window.savedPredictions,
         customPresets: window.customPresets,
+        userWallet: window.userWallet,
+        activeBets: window.activeBets,
+        settledBets: window.settledBets,
         exportDate: new Date().toISOString()
     };
 
@@ -584,6 +626,9 @@ async function importDatabaseSnapshot(event) {
             if (data.cache) window.computedPredictionsCache = data.cache;
             if (data.savedPredictions) window.savedPredictions = data.savedPredictions;
             if (data.customPresets) window.customPresets = data.customPresets;
+            if (data.userWallet) window.userWallet = data.userWallet;
+            if (data.activeBets) window.activeBets = data.activeBets;
+            if (data.settledBets) window.settledBets = data.settledBets;
             if (data.activeKey && window.allRaceMeetings[data.activeKey]) {
                 window.activeRaceKey = data.activeKey;
             } else {
@@ -591,6 +636,7 @@ async function importDatabaseSnapshot(event) {
                 if (keys.length > 0) window.activeRaceKey = keys[0];
             }
             populatePresetSettingsUI();
+            renderBettingTab();
 
             await sortAndPersistMeetingsObject();
             updateAllUIComponents();
@@ -606,8 +652,7 @@ async function importDatabaseSnapshot(event) {
             }
 
             event.target.value = "";
-            showNotification("Snapshot successfully restored into Cloud Firestore & IndexedDB!", "success");
-            refreshStorageEstimate();
+            showNotification("Snapshot successfully restored into Cloud Firestore & IndexedDB!", "success");        
         } catch (err) {
             console.error("Snapshot import failed:", err);
             showNotification("Failed to parse database snapshot file.");
@@ -631,6 +676,9 @@ async function sortAndPersistMeetingsObject() {
         cache: window.computedPredictionsCache,
         savedPredictions: window.savedPredictions,
         customPresets: window.customPresets,
+        userWallet: window.userWallet,
+        activeBets: window.activeBets,
+        settledBets: window.settledBets,
         exportDate: new Date().toISOString()
     };
 
@@ -654,6 +702,9 @@ async function sortAndPersistMeetingsObject() {
                 await db.sessions.put({ key: 'gbet_computed_cache', value: window.computedPredictionsCache });
                 await db.sessions.put({ key: 'gbet_session_saved_predictions', value: window.savedPredictions });
                 await db.sessions.put({ key: 'gbet_session_custom_presets', value: window.customPresets });
+                await db.sessions.put({ key: 'gbet_session_wallet', value: window.userWallet });
+                await db.sessions.put({ key: 'gbet_session_active_bets', value: window.activeBets });
+                await db.sessions.put({ key: 'gbet_session_settled_bets', value: window.settledBets });
             });
         }
     } catch (err) {
@@ -661,36 +712,52 @@ async function sortAndPersistMeetingsObject() {
     }
 
     await writeToLiveFileIfConnected();
-    refreshStorageEstimate();
 }
 
 function updateAllUIComponents() {
     updateRaceSelector();
     renderBatchSummaryDashboard();
+    
+    // Update TXT files imported label dynamically based on remaining meetings count
+    let totalMeetingsCount = Object.keys(window.allRaceMeetings).length;
+    let txtLabel = document.getElementById('txtFileLabel');
+    if (txtLabel) {
+        txtLabel.innerText = totalMeetingsCount > 0 ? `${totalMeetingsCount} file(s) loaded` : "Drag files or click";
+    }
 }
 
 function openTab(evt, tabName) {
-    const contents = document.querySelectorAll('.tab-content');
-    contents.forEach(c => c.classList.remove('active'));
-    
-    const btns = document.querySelectorAll('.tab-btn');
-    btns.forEach(b => {
-        b.classList.remove('text-slate-900', 'dark:text-white', 'border-slate-900', 'dark:border-white', 'font-bold');
-        b.classList.add('text-slate-500', 'dark:text-slate-400', 'border-transparent', 'font-medium');
-    });
+    // Hide all elements with class="tab-content"
+    let tabcontent = document.getElementsByClassName("tab-content");
+    for (let i = 0; i < tabcontent.length; i++) {
+        tabcontent[i].style.display = "none";
+    }
 
-    document.getElementById(tabName).classList.add('active');
-    evt.currentTarget.classList.remove('text-slate-500', 'dark:text-slate-400', 'border-transparent', 'font-medium');
-    evt.currentTarget.classList.add('text-slate-900', 'dark:text-white', 'border-slate-900', 'dark:border-white', 'font-bold');
-    
-    if (tabName === 'saved-tab') {
+    // Remove the class "active" from all tab links/buttons
+    let tablinks = document.getElementsByClassName("tablink");
+    for (let i = 0; i < tablinks.length; i++) {
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+    }
+
+    // Show the specific tab content, and add an "active" class to the button that opened the tab
+    let targetTab = document.getElementById(tabName);
+    if (targetTab) {
+        targetTab.style.display = "block";
+    }
+    if (evt && evt.currentTarget) {
+        evt.currentTarget.className += " active";
+    }
+
+    // --- ADD THIS BLOCK ---
+    if (tabName === 'saved-predictions-tab' || tabName === 'saved-tab') {
         populateSavedFilterDropdowns();
         renderSavedPredictions();
     } else if (tabName === 'batch-summary-tab') {
         renderBatchSummaryDashboard();
-    } else if (tabName === 'settings-tab') {
-        refreshStorageEstimate();
+    } else if (tabName === 'betting-tab') {
+        renderBettingTab();
     }
+    // ----------------------
 }
 
 function showNotification(message, type = "error") {
@@ -889,6 +956,12 @@ function parseTxtData(lines, filename) {
 
     let startersColMap = {};
 
+    let filenameDateMatch = filename.match(/(\d{2}[./-]\d{2}[./-]\d{4}|\d{8})/);
+    let fallbackDate = filenameDateMatch ? filenameDateMatch[1].replace(/\D/g, "") : "";
+    if (fallbackDate.length === 8) {
+        fallbackDate = `${fallbackDate.slice(0,2)}.${fallbackDate.slice(2,4)}.${fallbackDate.slice(4,8)}`;
+    }
+
     for (let i = 0; i < lines.length; i++) {
         let currentLine = lines[i];
 
@@ -909,7 +982,7 @@ function parseTxtData(lines, filename) {
             inStarters = true;
             i++;
             if (i < lines.length) {
-                let headers = lines[i].split(',').map(h => h.replace(/"/g, '').trim().toLowerCase());
+                let headers = lines[i].split(',').map(h => h.replace(/[\r"]/g, '').trim().toLowerCase());
                 startersColMap = {};
                 headers.forEach((h, idx) => {
                     startersColMap[h] = idx;
@@ -923,7 +996,7 @@ function parseTxtData(lines, filename) {
         }
 
         if (inFixture && currentLine.length > 0 && !currentLine.startsWith('date')) {
-            const parts = currentLine.split(',').map(p => p.replace(/"/g, '').trim());
+            const parts = currentLine.split(',').map(p => p.replace(/[\r"]/g, '').trim());
             if (parts.length >= 3) {
                 raceDate = parts[0];
                 trackName = parts[2];
@@ -931,7 +1004,7 @@ function parseTxtData(lines, filename) {
         }
 
         if (inContest && currentLine.length > 0) {
-            const parts = currentLine.split(',').map(p => p.replace(/"/g, '').trim());
+            const parts = currentLine.split(',').map(p => p.replace(/[\r"]/g, '').trim());
             raceNumber = parts[0];
             for (let p of parts) {
                 let trimmed = p;
@@ -942,16 +1015,16 @@ function parseTxtData(lines, filename) {
             }
         }
 
-        if (inStarters && currentLine.length > 3) {
-            const parts = currentLine.split(',').map(p => p.replace(/"/g, '').trim());
+        if (inStarters && currentLine.length > 3 && !currentLine.startsWith('number')) {
+            const parts = currentLine.split(',').map(p => p.replace(/[\r"]/g, '').trim());
             
             let getCol = (colName, fallbackIdx) => {
                 let idx = startersColMap[colName] !== undefined ? startersColMap[colName] : fallbackIdx;
-                return parts[idx] !== undefined ? parts[idx] : "";
+                return parts[idx] !== undefined ? parts[idx].replace(/[\r"]/g, '').trim() : "";
             };
 
             let rawDogName = getCol('startername', 3) || getCol('dog name', 3);
-            if (!rawDogName || rawDogName === "") continue;
+            if (!rawDogName || rawDogName === "" || rawDogName.startsWith('number')) continue;
 
             let officialBox = getCol('number', 0) || getCol('box', 0) || "1";
             let effectiveBox = officialBox;
@@ -968,7 +1041,9 @@ function parseTxtData(lines, filename) {
             let placeDiv = parseFloat(getCol('placediv', 2)) || 0;
             let trainer = getCol('statername2', 4) || getCol('trainer', 4) || "";
             let isScratched = getCol('scratched', 7).toLowerCase() === 'true';
-            let placingVal = parseInt(getCol('placing', 9)) || 0;
+            
+            let placingStr = getCol('placing', 9);
+            let placingVal = parseInt(placingStr) || 0;
 
             starters.push({
                 box: effectiveBox,
@@ -996,61 +1071,87 @@ function parseTxtData(lines, filename) {
         }
     }
 
-    if (!raceDistance) {
-        for (let line of lines) {
-            const match = line.match(/\b(\d{3,4}m)\b/i);
-            if (match) {
-                raceDistance = match[1];
-                break;
-            }
-        }
-    }
+		if (!raceDistance) {
+				let text = lines.join('\n');
+				const match = text.match(/\b(\d{3,4}m)\b/i);
+				if (match) {
+					raceDistance = match[1];
+				}
+			}
 
-    let key = trackName && raceNumber ? `${trackName} - Race ${raceNumber} (${raceDate})` : filename;
-    window.allRaceMeetings[key] = {
-        trackName: trackName || "UNKNOWN",
-        raceNumber: raceNumber || "1",
-        raceDistance: raceDistance || "",
-        raceDate: raceDate || "",
-        starters: starters,
-        actualWinner: actualWinner,
-        actualPlace1: actualPlace1,
-        actualPlace2: actualPlace2,
-        actualPlace3: actualPlace3,
-        actualPlace4: actualPlace4
-    };
+			if (!raceDate && fallbackDate) {
+				raceDate = fallbackDate;
+			}
 
-    if (!window.activeRaceKey) {
-        window.activeRaceKey = key;
-    }
-}
+			let cleanDateKey = raceDate ? raceDate.replace(/\D/g, "") : "NODATE";
+			if (cleanDateKey.length === 8) {
+				cleanDateKey = `${cleanDateKey.slice(0,2)}.${cleanDateKey.slice(2,4)}.${cleanDateKey.slice(4,8)}`;
+			}
+
+			// Declared only ONCE here using a unique variable name if needed, or reusing the declaration
+			let uniqueMeetingKey = trackName && raceNumber ? `${trackName.trim().toUpperCase()} - Race ${raceNumber} (${cleanDateKey})` : filename;
+			
+			window.allRaceMeetings[uniqueMeetingKey] = {
+				trackName: trackName || "UNKNOWN",
+				raceNumber: raceNumber || "1",
+				raceDistance: raceDistance || "",
+				raceDate: raceDate || fallbackDate || "",
+				starters: starters,
+				actualWinner: actualWinner,
+				actualPlace1: actualPlace1,
+				actualPlace2: actualPlace2,
+				actualPlace3: actualPlace3,
+				actualPlace4: actualPlace4
+			};
+
+			if (!window.activeRaceKey) {
+				window.activeRaceKey = uniqueMeetingKey;
+			}
+		}
 
 async function checkAutoFillPostRaceResults() {
     let updated = false;
 
-    window.savedPredictions.forEach(savedItem => {
-        let matchKey = Object.keys(window.allRaceMeetings).find(k => {
-            let m = window.allRaceMeetings[k];
-            let trackMatch = k.toUpperCase().includes(m.trackName.toUpperCase()) && savedItem.trackName.toUpperCase().includes(m.trackName.toUpperCase());
-            
+	window.savedPredictions.forEach(savedItem => {
+        let matchingMeeting = Object.values(window.allRaceMeetings).find(m => {
+            let savedTrack = extractTrackNameFromSaved(savedItem).toUpperCase().trim();
+            let meetingTrack = (m.trackName || "").toUpperCase().trim();
+            let trackMatch = savedTrack === meetingTrack || savedTrack.includes(meetingTrack) || meetingTrack.includes(savedTrack);
+
             let savedRaceNum = String(savedItem.raceNumber || "").trim();
             let meetingRaceNum = String(m.raceNumber || "").trim();
-            let raceNumMatch = (savedRaceNum && savedRaceNum !== "N/A" && savedRaceNum === meetingRaceNum) ||
-                               new RegExp(`\\bRACE\\s*${meetingRaceNum}\\b`, 'i').test(savedItem.trackName);
+            if (!savedRaceNum || savedRaceNum === "N/A") {
+                let match = (savedItem.trackName || "").match(/RACE\s*(\d+)/i);
+                if (match) savedRaceNum = match[1];
+            }
+            let raceNumMatch = savedRaceNum && meetingRaceNum && savedRaceNum === meetingRaceNum;
 
-            let dateMatch = !m.raceDate || !savedItem.raceDate || savedItem.raceDate === m.raceDate || savedItem.timestamp.includes(m.raceDate) || k.includes(m.raceDate);
+            let savedDateClean = String(savedItem.raceDate || extractDateFromSaved(savedItem) || "").replace(/\D/g, "");
+            if (!savedDateClean) {
+                let match = (savedItem.trackName || "").match(/(\d{2}[./-]\d{2}[./-]\d{4}|\d{8})/);
+                if (match) savedDateClean = match[1].replace(/\D/g, "");
+            }
+            let meetingDateClean = String(m.raceDate || "").replace(/\D/g, "");
+
+            let dateMatch = true;
+            if (savedDateClean && meetingDateClean) {
+                dateMatch = savedDateClean === meetingDateClean;
+            }
+
             return trackMatch && raceNumMatch && dateMatch && m.actualWinner;
         });
 
-        if (matchKey) {
-            let meeting = window.allRaceMeetings[matchKey];
-            if (meeting.actualWinner && meeting.actualWinner !== "") {
-                savedItem.actualWinner = meeting.actualWinner;
-                savedItem.actualPlace1 = meeting.actualPlace1;
-                savedItem.actualPlace2 = meeting.actualPlace2;
-                savedItem.actualPlace3 = meeting.actualPlace3;
-                savedItem.actualPlace4 = meeting.actualPlace4;
+        if (matchingMeeting) {
+            if (matchingMeeting.actualWinner && matchingMeeting.actualWinner !== "") {
+                savedItem.actualWinner = matchingMeeting.actualWinner;
+                savedItem.actualPlace1 = matchingMeeting.actualPlace1;
+                savedItem.actualPlace2 = matchingMeeting.actualPlace2;
+                savedItem.actualPlace3 = matchingMeeting.actualPlace3;
+                savedItem.actualPlace4 = matchingMeeting.actualPlace4;
                 
+                let winningStarter = matchingMeeting.starters.find(s => s.starterName.toUpperCase() === matchingMeeting.actualWinner.toUpperCase() || s.placing === 1);
+                let officialWinDiv = winningStarter && winningStarter.winDiv > 0 ? winningStarter.winDiv : 0;
+
                 let scoredDogsList = savedItem.scoredDogs || [];
                 let topPick = scoredDogsList.length > 0 ? scoredDogsList[0] : null;
                 let activeCompetitorsCount = scoredDogsList.length;
@@ -1058,13 +1159,13 @@ async function checkAutoFillPostRaceResults() {
                 
                 if (topPick) {
                     let topPickName = topPick.name || "";
-                    if (meeting.actualWinner.toUpperCase() === topPickName.toUpperCase()) {
-                        savedItem.actualWinPayout = topPick.winDiv > 0 ? topPick.winDiv : 2.0;
+                    if (matchingMeeting.actualWinner.toUpperCase() === topPickName.toUpperCase()) {
+                        savedItem.actualWinPayout = officialWinDiv > 0 ? officialWinDiv : (topPick.winDiv > 0 ? topPick.winDiv : 2.0);
                     } else {
                         savedItem.actualWinPayout = 0;
                     }
 
-                    let podium = [meeting.actualPlace1, meeting.actualPlace2, meeting.actualPlace3].map(n => (n || "").toUpperCase());
+                    let podium = [matchingMeeting.actualPlace1, matchingMeeting.actualPlace2, matchingMeeting.actualPlace3].map(n => (n || "").toUpperCase());
                     let eligiblePlaceHit = false;
                     if (payoutTier === "1,2,3") {
                         eligiblePlaceHit = podium.slice(0, 3).includes(topPickName.toUpperCase());
@@ -1073,7 +1174,9 @@ async function checkAutoFillPostRaceResults() {
                     }
 
                     if (eligiblePlaceHit) {
-                        savedItem.actualPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
+                        let topPickStarter = matchingMeeting.starters.find(s => s.starterName.toUpperCase() === topPickName.toUpperCase());
+                        let officialPlaceDiv = topPickStarter && topPickStarter.placeDiv > 0 ? topPickStarter.placeDiv : (topPick.placeDiv > 0 ? topPick.placeDiv : 1.2);
+                        savedItem.actualPlacePayout = officialPlaceDiv;
                     } else {
                         savedItem.actualPlacePayout = 0;
                     }
@@ -1083,17 +1186,85 @@ async function checkAutoFillPostRaceResults() {
         }
     });
 
+    window.activeBets.forEach(bet => {
+        let matchingMeeting = Object.values(window.allRaceMeetings).find(m => {
+            let trackMatch = m.trackName.toUpperCase().includes(bet.trackName.toUpperCase()) || bet.trackName.toUpperCase().includes(m.trackName.toUpperCase());
+            let raceNumMatch = String(m.raceNumber) === String(bet.raceNum);
+            return trackMatch && raceNumMatch && m.actualWinner;
+        });
+
+        if (matchingMeeting) {
+            let won = false;
+            let payout = 0;
+
+            let targetStarter = matchingMeeting.starters.find(s => s.starterName.toUpperCase() === bet.dogName.toUpperCase());
+            let activeCompetitorsCount = matchingMeeting.starters.filter(s => !s.scratched && !s.starterName.includes('VACANT')).length;
+            let payoutTier = activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only");
+            let podium = [matchingMeeting.actualPlace1, matchingMeeting.actualPlace2, matchingMeeting.actualPlace3].map(n => (n || "").toUpperCase());
+
+            if (bet.betType === 'Win') {
+                if (matchingMeeting.actualWinner && matchingMeeting.actualWinner.toUpperCase() === bet.dogName.toUpperCase()) {
+                    won = true;
+                    let officialOdds = targetStarter && targetStarter.winDiv > 0 ? targetStarter.winDiv : bet.odds;
+                    payout = bet.stake * officialOdds;
+                }
+            } else if (bet.betType === 'Place') {
+                let eligiblePlaceHit = false;
+                if (payoutTier === "1,2,3") {
+                    eligiblePlaceHit = podium.slice(0, 3).includes(bet.dogName.toUpperCase());
+                } else if (payoutTier === "2") {
+                    eligiblePlaceHit = podium.slice(0, 2).includes(bet.dogName.toUpperCase());
+                }
+
+                if (eligiblePlaceHit) {
+                    won = true;
+                    let officialOdds = targetStarter && targetStarter.placeDiv > 0 ? targetStarter.placeDiv : (bet.odds > 0 ? bet.odds : 1.2);
+                    payout = bet.stake * officialOdds;
+                }
+            }
+
+            bet.status = 'settled';
+            bet.won = won;
+            bet.payout = won ? payout : 0;
+            
+            if (won && payout > 0) {
+                if (!window.userWallet.transactions) window.userWallet.transactions = [];
+                window.userWallet.transactions.unshift({
+                    id: Date.now() + Math.random(),
+                    type: 'Payout',
+                    description: `Bet Payout: ${bet.dogName} (${bet.betType})`,
+                    amount: payout,
+                    balanceAfter: window.userWallet.balance + payout,
+                    timestamp: new Date().toLocaleString()
+                });
+            }
+
+            window.settledBets.unshift(bet);
+            window.userWallet.balance += bet.payout;
+            updated = true;
+        }
+    });
+
+    if (window.activeBets.length > 0) {
+        window.activeBets = window.activeBets.filter(b => b.status !== 'settled');
+    }
+
     if (updated) {
         await sortAndPersistMeetingsObject();
+        populateSavedFilterDropdowns();
         renderSavedPredictions();
+        renderBettingTab();
         updateAllUIComponents();
     }
 }
 
 async function syncResultsWithSavedHistory() {
     await checkAutoFillPostRaceResults();
+    populateSavedFilterDropdowns();
+    renderSavedPredictions();
+    renderBettingTab();
     updateAllUIComponents();
-    showNotification("Saved history synchronized with race results.", "success");
+    showNotification("Saved history synchronized with race results successfully!", "success");
 }
 
 function getRacePillStatus(key) {
@@ -1309,6 +1480,12 @@ function updateRaceSelector() {
         verticalRibbon.classList.remove('flex');
         pillsStrip.innerHTML = `<span class="text-xs text-slate-400 italic text-center py-4">No meetings imported</span>`;
         ribbonCount.innerText = '0';
+        
+        let txtLabel = document.getElementById('txtFileLabel');
+        if (txtLabel) txtLabel.innerText = "Drag files or click";
+
+        document.getElementById('race-title').innerText = "Race Details (Pending Import)";
+        document.getElementById('starters-tbody').innerHTML = `<tr><td colspan="7" class="p-4 text-center text-slate-400 font-medium">No race data loaded. Please import TXT meeting files.</td></tr>`;
     }
 }
 
@@ -1579,289 +1756,282 @@ async function clearActiveMeetingsData() {
         document.getElementById('starters-tbody').innerHTML = `<tr><td colspan="7" class="p-4 text-center text-slate-400 font-medium">No race data loaded. Please import TXT meeting files.</td></tr>`;
         renderBatchSummaryDashboard();
         showNotification("All imported race meetings cleared.", "success");
-        refreshStorageEstimate();
     }
 }
 
-		// Opens the CSV manager modal instead of direct confirmation
-		function clearDogStatsData() {
-			if (!window.dogStats || window.dogStats.length === 0) {
-				showNotification("No dog statistics loaded to clear.");
-				return;
-			}
-			renderCsvManagerModalList();
-			
-			let modal = document.getElementById('csv-manager-modal');
-			let modalContent = document.getElementById('csv-manager-modal-content');
-			modal.classList.remove('hidden');
-			void modal.offsetWidth;
-			modal.classList.remove('opacity-0');
-			modalContent.classList.remove('scale-95');
-		}
+function clearDogStatsData() {
+    if (!window.dogStats || window.dogStats.length === 0) {
+        showNotification("No dog statistics loaded to clear.");
+        return;
+    }
+    renderCsvManagerModalList();
+    
+    let modal = document.getElementById('csv-manager-modal');
+    let modalContent = document.getElementById('csv-manager-modal-content');
+    modal.classList.remove('hidden');
+    void modal.offsetWidth;
+    modal.classList.remove('opacity-0');
+    modalContent.classList.remove('scale-95');
+}
 
-		function closeCsvManagerModal() {
-			let modal = document.getElementById('csv-manager-modal');
-			let modalContent = document.getElementById('csv-manager-modal-content');
-			modal.classList.add('opacity-0');
-			modalContent.classList.add('scale-95');
-			setTimeout(() => {
-				modal.classList.add('hidden');
-			}, 300);
-		}
+function closeCsvManagerModal() {
+    let modal = document.getElementById('csv-manager-modal');
+    let modalContent = document.getElementById('csv-manager-modal-content');
+    modal.classList.add('opacity-0');
+    modalContent.classList.add('scale-95');
+    setTimeout(() => {
+        modal.classList.add('hidden');
+    }, 300);
+}
 
-		// Groups dogStats by the original CSV filename in the delete modal overlay
-		function renderCsvManagerModalList() {
-			const container = document.getElementById('csv-manager-file-list');
-			if (!window.dogStats || window.dogStats.length === 0) {
-				container.innerHTML = `<p class="text-slate-400 italic text-center py-4">No CSV stats files loaded.</p>`;
-				return;
-			}
+function renderCsvManagerModalList() {
+    const container = document.getElementById('csv-manager-file-list');
+    if (!window.dogStats || window.dogStats.length === 0) {
+        container.innerHTML = `<p class="text-slate-400 italic text-center py-4">No CSV stats files loaded.</p>`;
+        return;
+    }
 
-			let fileGroups = {};
-			window.dogStats.forEach((stat, index) => {
-				let fileName = stat.sourceFile || `${stat.track || 'UNKNOWN'}_${stat.date || 'NODATE'}.csv`;
-				let groupKey = fileName;
+    let fileGroups = {};
+    window.dogStats.forEach((stat) => {
+        let fileName = stat.sourceFile || "Unassigned_Stats.csv";
+        let groupKey = fileName;
 
-				if (!fileGroups[groupKey]) {
-					fileGroups[groupKey] = {
-						groupKey: groupKey,
-						displayName: fileName,
-						count: 0
-					};
-				}
-				fileGroups[groupKey].count++;
-			});
+        if (!fileGroups[groupKey]) {
+            fileGroups[groupKey] = {
+                groupKey: groupKey,
+                displayName: fileName,
+                count: 0
+            };
+        }
+        fileGroups[groupKey].count++;
+    });
 
-			let html = '';
-			Object.keys(fileGroups).forEach(groupKey => {
-				let group = fileGroups[groupKey];
+    let html = '';
+    Object.keys(fileGroups).sort().forEach(groupKey => {
+        let group = fileGroups[groupKey];
 
-				html += `
-					<div class="bg-slate-50 dark:bg-slate-800/80 p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex justify-between items-center">
-						<div>
-							<span class="font-black text-sm text-slate-900 dark:text-white font-mono tracking-wide block">${group.displayName}</span>
-							<span class="text-xs font-mono text-slate-500 dark:text-slate-400"><strong class="text-slate-700 dark:text-slate-300">${group.count}</strong> linked dog record(s)</span>
-						</div>
-						<button onclick="deleteCsvBatchGroup('${encodeURIComponent(group.groupKey)}')" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-1.5 px-3 rounded shadow transition-colors">
-							Delete File & All Linked Stats
-						</button>
-					</div>
-				`;
-			});
+        html += `
+            <div class="bg-slate-50 dark:bg-slate-800/80 p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                <div>
+                    <span class="font-black text-sm text-slate-900 dark:text-white font-mono tracking-wide block">${group.displayName}</span>
+                    <span class="text-xs font-mono text-slate-500 dark:text-slate-400"><strong class="text-slate-700 dark:text-slate-300">${group.count}</strong> linked dog record(s)</span>
+                </div>
+                <button onclick="deleteCsvBatchGroup('${encodeURIComponent(group.groupKey)}')" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-1.5 px-3 rounded shadow transition-colors">
+                    Delete File & All Linked Stats
+                </button>
+            </div>
+        `;
+    });
 
-			container.innerHTML = html;
-		}
+    container.innerHTML = html;
+}
 
-		// Deletes all dog statistics linked to the original CSV filename
-		async function deleteCsvBatchGroup(encodedGroupKey) {
-			let targetFileName = decodeURIComponent(encodedGroupKey);
-			if (confirm(`Are you sure you want to delete "${targetFileName}" and all its linked dog statistics records?`)) {
-				window.dogStats = window.dogStats.filter(stat => {
-					let fileName = stat.sourceFile || `${stat.track || 'UNKNOWN'}_${stat.date || 'NODATE'}.csv`;
-					return fileName !== targetFileName;
-				});
+async function deleteCsvBatchGroup(encodedGroupKey) {
+    let targetFileName = decodeURIComponent(encodedGroupKey);
+    if (confirm(`Are you sure you want to delete "${targetFileName}" and all its linked dog statistics records?`)) {
+        window.dogStats = window.dogStats.filter(stat => {
+            let fileName = stat.sourceFile || `${stat.track || 'UNKNOWN'}_${stat.date || 'NODATE'}.csv`;
+            return fileName !== targetFileName;
+        });
 
-				await sortAndPersistMeetingsObject();
-				renderStatsTable();
-				renderActiveRace();
-				renderBatchSummaryDashboard();
-				
-				if (window.activeRaceKey) {
-					refreshPredictions(false);
-				}
+        await sortAndPersistMeetingsObject();
+        renderStatsTable();
+        renderActiveRace();
+        renderBatchSummaryDashboard();
+        
+        if (window.activeRaceKey) {
+            refreshPredictions(false);
+        }
 
-				renderCsvManagerModalList();
-				showNotification(`Successfully deleted "${targetFileName}" and all linked stats.`, "success");
-				refreshStorageEstimate();
+        renderCsvManagerModalList();
+        showNotification(`Successfully deleted "${targetFileName}" and all linked stats.`, "success");
 
-				if (window.dogStats.length === 0) {
-					closeCsvManagerModal();
-				}
-			}
-		}
+        if (window.dogStats.length === 0) {
+            closeCsvManagerModal();
+        }
+    }
+}
 
-		// Deletes all accumulated dog stats history
-		async function confirmDeleteAllCsvFiles() {
-			if (confirm("Are you sure you want to clear ALL accumulated dog statistics history?")) {
-				window.dogStats = [];
-				await sortAndPersistMeetingsObject();
+async function confirmDeleteAllCsvFiles() {
+    if (confirm("Are you sure you want to clear ALL accumulated dog statistics history?")) {
+        window.dogStats = [];
+        await sortAndPersistMeetingsObject();
 
-				document.getElementById('csvFileLabel').innerText = "Drag files or click";
-				renderStatsTable();
-				renderActiveRace();
-				renderBatchSummaryDashboard();
-				
-				if (window.activeRaceKey) {
-					refreshPredictions(false);
-				}
+        document.getElementById('csvFileLabel').innerText = "Drag files or click";
+        renderStatsTable();
+        renderActiveRace();
+        renderBatchSummaryDashboard();
+        
+        if (window.activeRaceKey) {
+            refreshPredictions(false);
+        }
 
-				closeCsvManagerModal();
-				showNotification("All dog statistics history cleared.", "success");
-				refreshStorageEstimate();
-			}
-		}
+        closeCsvManagerModal();
+        showNotification("All dog statistics history cleared.", "success");
+    }
+}
 
-		document.getElementById('csvFileInput').addEventListener('change', async function(e) {
-			const files = e.target.files;
-			if (!files || files.length === 0) return;
+document.getElementById('csvFileInput').addEventListener('change', async function(e) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-			let processedFiles = 0;
-			let totalSkipped = 0;
-			let totalAdded = 0;
+    let processedFiles = 0;
+    let totalSkipped = 0;
+    let totalAdded = 0;
 
-			let existingRecords = new Set();
-			if (window.dogStats) {
-				window.dogStats.forEach(d => {
-					existingRecords.add(`${d.name}_${d.date}_${d.track}_${d.sourceFile || ''}`);
-				});
-			}
+    let existingRecords = new Set();
+    if (window.dogStats) {
+        window.dogStats.forEach(d => {
+            existingRecords.add(`${d.name}_${d.date}_${d.track}_${d.sourceFile || ''}`);
+        });
+    }
 
-			for (let file of files) {
-				let originalFileName = file.name;
-				let inferredDogName = file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ").toUpperCase();
-				
-				const reader = new FileReader();
-				reader.onload = async function(e) {
-					let result = parseHeaderCsvContent(e.target.result, inferredDogName, existingRecords, originalFileName);
-					totalAdded += result.added;
-					totalSkipped += result.skipped;
-					
-					if (result.newRecords && result.newRecords.length > 0) {
-						result.newRecords.forEach(d => window.dogStats.push(d));
-					}
+    for (let file of files) {
+        let originalFileName = file.name;
+        let inferredDogName = file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ").toUpperCase();
+        
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            let result = parseHeaderCsvContent(e.target.result, inferredDogName, existingRecords, originalFileName);
+            totalAdded += result.added;
+            totalSkipped += result.skipped;
+            
+            if (result.newRecords && result.newRecords.length > 0) {
+                result.newRecords.forEach(d => window.dogStats.push(d));
+            }
 
-					processedFiles++;
-					if (processedFiles === files.length) {
-						document.getElementById('csvFileLabel').innerText = `${window.dogStats.length} stats records loaded`;
-						await sortAndPersistMeetingsObject();
-						renderStatsTable();
-						renderActiveRace();
-						renderBatchSummaryDashboard();
-						
-						if (window.activeRaceKey) {
-							refreshPredictions(false);
-						}
-						
-						if (totalSkipped > 0) {
-							let msgType = totalAdded > 0 ? "success" : "error";
-							showNotification(`Processed ${files.length} file(s). Added ${totalAdded} new records. Skipped ${totalSkipped} duplicates.`, msgType);
-						} else {
-							showNotification(`Successfully imported ${files.length} CSV file(s). Added ${totalAdded} new records!`, "success");
-						}
+            processedFiles++;
+            if (processedFiles === files.length) {
+                document.getElementById('csvFileLabel').innerText = `${window.dogStats.length} stats records loaded`;
+                await sortAndPersistMeetingsObject();
+                renderStatsTable();
+                renderActiveRace();
+                renderBatchSummaryDashboard();
+                
+                if (window.activeRaceKey) {
+                    refreshPredictions(false);
+                }
+                
+                if (totalSkipped > 0) {
+                    let msgType = totalAdded > 0 ? "success" : "error";
+                    showNotification(`Processed ${files.length} file(s). Added ${totalAdded} new records. Skipped ${totalSkipped} duplicates.`, msgType);
+                } else {
+                    showNotification(`Successfully imported ${files.length} CSV file(s). Added ${totalAdded} new records!`, "success");
+                }
 
-						document.getElementById('csvFileInput').value = "";
-					}
-				};
-				reader.readAsText(file);
-			}
-		});
+                document.getElementById('csvFileInput').value = "";
+            }
+        };
+        reader.readAsText(file);
+    }
+});
 
-	function parseHeaderCsvContent(csvText, fallbackDogName, existingRecordsSet, originalFileName = "Manual_Import.csv") {
-		const rawLines = csvText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-		let newRecords = [];
-		let added = 0;
-		let skipped = 0;
+function parseHeaderCsvContent(csvText, fallbackDogName, existingRecordsSet, originalFileName = "Manual_Import.csv") {
+    const rawLines = csvText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    let newRecords = [];
+    let added = 0;
+    let skipped = 0;
 
-		if (rawLines.length < 2) return { newRecords, added, skipped };
+    if (rawLines.length < 2) return { newRecords, added, skipped };
 
-		let colMap = {};
-		let currentDogName = fallbackDogName;
-		let currentDogSex = "Unknown";
+    let colMap = {};
+    let currentDogName = fallbackDogName;
+    let currentDogSex = "Unknown";
 
-		for (let i = 0; i < rawLines.length; i++) {
-			let line = rawLines[i];
-			let upperLine = line.toUpperCase();
+    for (let i = 0; i < rawLines.length; i++) {
+        let line = rawLines[i];
+        let upperLine = line.toUpperCase();
 
-			if (upperLine.startsWith('RACE') || upperLine.startsWith('DOG NAME')) {
-				if (upperLine.startsWith('DOG NAME')) {
-					let headers = line.split(',').map(h => h.replace(/"/g, '').trim().toUpperCase());
-					colMap = {};
-					headers.forEach((h, idx) => {
-						colMap[h] = idx;
-					});
-				}
-				continue;
-			}
+        if (upperLine.startsWith('RACE') || upperLine.startsWith('DOG NAME')) {
+            if (upperLine.startsWith('DOG NAME')) {
+                let headers = line.split(',').map(h => h.replace(/"/g, '').trim().toUpperCase());
+                colMap = {};
+                headers.forEach((h, idx) => {
+                    colMap[h] = idx;
+                });
+            }
+            continue;
+        }
 
-			let parts = [];
-			let inQuotes = false;
-			let currentVal = "";
-			for (let char of line) {
-				if (char === '"') {
-					inQuotes = !inQuotes;
-				} else if (char === ',' && !inQuotes) {
-					parts.push(currentVal.trim().replace(/^"|"$/g, ''));
-					currentVal = "";
-				} else {
-					currentVal += char;
-				}
-			}
-			parts.push(currentVal.trim().replace(/^"|"$/g, ''));
+        let parts = [];
+        let inQuotes = false;
+        let currentVal = "";
+        for (let char of line) {
+            if (char === '"') {
+                inQuotes = !inQuotes;
+            } else if (char === ',' && !inQuotes) {
+                parts.push(currentVal.trim().replace(/^"|"$/g, ''));
+                currentVal = "";
+            } else {
+                currentVal += char;
+            }
+        }
+        parts.push(currentVal.trim().replace(/^"|"$/g, ''));
 
-			if (parts.length < 5) continue;
+        if (parts.length < 5) continue;
 
-			let getIdx = (name, fallback) => colMap[name] !== undefined ? colMap[name] : fallback;
-			let nameIdx = getIdx('DOG NAME', 0);
-			let dateIdx = getIdx('DATE', 6);
-			let sexIdx = getIdx('SEX', 1);
-			let plcIdx = getIdx('PLC', 2);
-			let boxIdx = getIdx('BOX', 3);
-			let distIdx = getIdx('DIST', 5);
-			let trackIdx = getIdx('TRACK', 7);
-			let timeIdx = getIdx('TIME', 9);
-			let splitIdx = getIdx('1 SEC', 12);
-			let pirIdx = getIdx('PIR', 15);
+        let getIdx = (name, fallback) => colMap[name] !== undefined ? colMap[name] : fallback;
+        let nameIdx = getIdx('DOG NAME', 0);
+        let dateIdx = getIdx('DATE', 6);
+        let sexIdx = getIdx('SEX', 1);
+        let plcIdx = getIdx('PLC', 2);
+        let boxIdx = getIdx('BOX', 3);
+        let distIdx = getIdx('DIST', 5);
+        let trackIdx = getIdx('TRACK', 7);
+        let timeIdx = getIdx('TIME', 9);
+        let splitIdx = getIdx('1 SEC', 12);
+        let pirIdx = getIdx('PIR', 15);
 
-			let nameField = parts[nameIdx] !== undefined ? parts[nameIdx] : "";
-			if (nameField !== "" && nameField.toUpperCase() !== "NAN" && nameField !== "UNDEFINED") {
-				let cleanedName = nameField.replace(/^\d+\.\s*/, '').trim();
-				if (cleanedName.length > 1) {
-					currentDogName = cleanedName.toUpperCase();
-				}
-				let sexField = sexIdx !== -1 && parts[sexIdx] ? parts[sexIdx] : "";
-				let combinedHeader = `${currentDogName} ${sexField}`;
-				currentDogSex = extractSex(combinedHeader);
-			}
+        let nameField = parts[nameIdx] !== undefined ? parts[nameIdx] : "";
+        if (nameField !== "" && nameField.toUpperCase() !== "NAN" && nameField !== "UNDEFINED") {
+            let cleanedName = nameField.replace(/^\d+\.\s*/, '').trim();
+            if (cleanedName.length > 1) {
+                currentDogName = cleanedName.toUpperCase();
+            }
+            let sexField = sexIdx !== -1 && parts[sexIdx] ? parts[sexIdx] : "";
+            let combinedHeader = `${currentDogName} ${sexField}`;
+            currentDogSex = extractSex(combinedHeader);
+        }
 
-			let raceDate = dateIdx !== -1 && parts[dateIdx] ? parts[dateIdx] : "-";
-			let plc = plcIdx !== -1 && parts[plcIdx] ? parts[plcIdx] : "-";
-			let box = boxIdx !== -1 && parts[boxIdx] ? parts[boxIdx] : "-";
-			let dist = distIdx !== -1 && parts[distIdx] ? parts[distIdx] : "";
-			let track = trackIdx !== -1 && parts[trackIdx] ? parts[trackIdx] : "";
-			let time = timeIdx !== -1 && parts[timeIdx] ? parts[timeIdx] : "-";
-			let split1 = splitIdx !== -1 && parts[splitIdx] ? parts[splitIdx] : "-";
-			let pir = pirIdx !== -1 && parts[pirIdx] ? parts[pirIdx] : "-";
+        let raceDate = dateIdx !== -1 && parts[dateIdx] ? parts[dateIdx] : "-";
+        let plc = plcIdx !== -1 && parts[plcIdx] ? parts[plcIdx] : "-";
+        let box = boxIdx !== -1 && parts[boxIdx] ? parts[boxIdx] : "-";
+        let dist = distIdx !== -1 && parts[distIdx] ? parts[distIdx] : "";
+        let track = trackIdx !== -1 && parts[trackIdx] ? parts[trackIdx] : "";
+        let time = timeIdx !== -1 && parts[timeIdx] ? parts[timeIdx] : "-";
+        let split1 = splitIdx !== -1 && parts[splitIdx] ? parts[splitIdx] : "-";
+        let pir = pirIdx !== -1 && parts[pirIdx] ? parts[pirIdx] : "-";
 
-			if (plc !== "-" || time !== "-") {
-				let trackUpper = track.toUpperCase();
-				let recordKey = `${currentDogName}_${raceDate}_${trackUpper}_${originalFileName}`;
+        if (plc !== "-" || time !== "-") {
+            let trackUpper = track.toUpperCase();
+            let recordKey = `${currentDogName}_${raceDate}_${trackUpper}_${originalFileName}`;
 
-				if (existingRecordsSet && existingRecordsSet.has(recordKey)) {
-					skipped++;
-				} else {
-					newRecords.push({
-						name: currentDogName,
-						date: raceDate,
-						sex: currentDogSex,
-						plc: plc,
-						box: String(box).trim(),
-						dist: dist,
-						track: trackUpper,
-						pir: pir,
-						split1: split1,
-						time: time,
-						sourceFile: originalFileName
-					});
-					added++;
-					
-					if (existingRecordsSet) {
-						existingRecordsSet.add(recordKey);
-					}
-				}
-			}
-		}
-		return { newRecords, added, skipped };
-	}
+            if (existingRecordsSet && existingRecordsSet.has(recordKey)) {
+                skipped++;
+            } else {
+                newRecords.push({
+                    name: currentDogName,
+                    date: raceDate,
+                    sex: currentDogSex,
+                    plc: plc,
+                    box: String(box).trim(),
+                    dist: dist,
+                    track: trackUpper,
+                    pir: pir,
+                    split1: split1,
+                    time: time,
+                    sourceFile: originalFileName
+                });
+                added++;
+                
+                if (existingRecordsSet) {
+                    existingRecordsSet.add(recordKey);
+                }
+            }
+        }
+    }
+    return { newRecords, added, skipped };
+}
 
 async function submitManualStatRow() {
     let name = document.getElementById('m-name').value.trim().toUpperCase();
@@ -1957,25 +2127,27 @@ function editStatRow(index) {
     if (!tr) return;
 
     tr.innerHTML = `
-        <td class="p-2"><input type="text" id="edit-name-${index}" value="${d.name}" class="w-full text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-bold"/></td>
-        <td class="p-2"><input type="text" id="edit-date-${index}" value="${d.date || ''}" placeholder="YYYY-MM-DD" class="w-full text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/></td>
-        <td class="p-2">
-            <select id="edit-sex-${index}" class="text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900">
-                <option value="" ${!d.sex || d.sex === 'Unknown' ? 'selected' : ''}>-- Select --</option>
+        <td class="p-1.5"><input type="text" id="edit-name-${index}" value="${d.name}" class="w-full text-xs px-1.5 py-1 border rounded bg-white dark:bg-slate-900 font-bold"/></td>
+        <td class="p-1.5"><input type="text" id="edit-date-${index}" value="${d.date || ''}" placeholder="YYYY-MM-DD" class="w-20 text-xs px-1 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/></td>
+        <td class="p-1.5">
+            <select id="edit-sex-${index}" class="text-xs px-1 py-1 border rounded bg-white dark:bg-slate-900">
+                <option value="" ${!d.sex || d.sex === 'Unknown' ? 'selected' : ''}>--</option>
                 <option value="Dog" ${d.sex === 'Dog' ? 'selected' : ''}>Dog</option>
                 <option value="Bitch" ${d.sex === 'Bitch' ? 'selected' : ''}>Bitch</option>
             </select>
         </td>
-        <td class="p-2"><input type="text" id="edit-plc-${index}" value="${d.plc}" class="w-16 text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/></td>
-        <td class="p-2"><input type="text" id="edit-box-${index}" value="${d.box}" class="w-14 text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/></td>
-        <td class="p-2"><input type="text" id="edit-dist-${index}" value="${d.dist}" class="w-16 text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/></td>
-        <td class="p-2"><input type="text" id="edit-track-${index}" value="${d.track}" class="w-16 text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900"/></td>
-        <td class="p-2"><input type="text" id="edit-pir-${index}" value="${d.pir || ''}" class="w-20 text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/></td>
-        <td class="p-2"><input type="text" id="edit-split1-${index}" value="${d.split1 || ''}" class="w-16 text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/></td>
-        <td class="p-2"><input type="text" id="edit-time-${index}" value="${d.time}" class="w-16 text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono"/></td>
-        <td class="p-2 text-right space-x-1">
-            <button onclick="saveStatRow(${index})" class="bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1 px-2.5 rounded shadow transition-colors">Save</button>
-            <button onclick="renderStatsTable()" class="bg-slate-400 hover:bg-slate-500 text-white text-xs font-bold py-1 px-2.5 rounded shadow transition-colors">Cancel</button>
+        <td class="p-1.5"><input type="text" id="edit-plc-${index}" value="${d.plc}" class="w-10 text-xs px-1 py-1 border rounded bg-white dark:bg-slate-900 font-mono text-center"/></td>
+        <td class="p-1.5"><input type="text" id="edit-box-${index}" value="${d.box}" class="w-10 text-xs px-1 py-1 border rounded bg-white dark:bg-slate-900 font-mono text-center"/></td>
+        <td class="p-1.5"><input type="text" id="edit-dist-${index}" value="${d.dist}" class="w-12 text-xs px-1 py-1 border rounded bg-white dark:bg-slate-900 font-mono text-center"/></td>
+        <td class="p-1.5"><input type="text" id="edit-track-${index}" value="${d.track}" class="w-14 text-xs px-1 py-1 border rounded bg-white dark:bg-slate-900"/></td>
+        <td class="p-1.5"><input type="text" id="edit-pir-${index}" value="${d.pir || ''}" class="w-14 text-xs px-1 py-1 border rounded bg-white dark:bg-slate-900 font-mono text-center"/></td>
+        <td class="p-1.5"><input type="text" id="edit-split1-${index}" value="${d.split1 || ''}" class="w-12 text-xs px-1 py-1 border rounded bg-white dark:bg-slate-900 font-mono text-center"/></td>
+        <td class="p-1.5"><input type="text" id="edit-time-${index}" value="${d.time}" class="w-14 text-xs px-1 py-1 border rounded bg-white dark:bg-slate-900 font-mono text-center"/></td>
+        <td class="p-1.5 text-right whitespace-nowrap">
+            <div class="flex items-center justify-end gap-1">
+                <button onclick="saveStatRow(${index})" class="bg-green-600 hover:bg-green-700 text-white text-[11px] font-bold py-1 px-1.5 rounded shadow transition-colors">Save</button>
+                <button onclick="renderStatsTable()" class="bg-slate-400 hover:bg-slate-500 text-white text-[11px] font-bold py-1 px-1.5 rounded shadow transition-colors">Cancel</button>
+            </div>
         </td>
     `;
 }
@@ -2660,7 +2832,10 @@ async function refreshPredictions(showNotif = true) {
                     </div>
                     <div class="text-sm text-slate-700 dark:text-slate-300 md:text-right flex flex-col items-start md:items-end justify-center gap-1.5">
                         <div class="flex items-center gap-1.5 flex-wrap">${pirBadge} ${boxBiasBadge} ${trafficBadge}</div>
-                        <span class="block">Win Div: <strong class="text-slate-900 dark:text-white font-mono text-base">$${dog.winDiv}</strong> | Place Div: <strong class="text-slate-900 dark:text-white font-mono text-base">$${dog.placeDiv}</strong> | Softmax Prob: <strong class="text-green-700 dark:text-green-400 font-mono">${dog.winProb.toFixed(1)}%</strong></span>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="block">Win Div: <strong class="text-slate-900 dark:text-white font-mono text-base">$${dog.winDiv}</strong> | Place Div: <strong class="text-slate-900 dark:text-white font-mono text-base">$${dog.placeDiv}</strong> | Softmax Prob: <strong class="text-green-700 dark:text-green-400 font-mono">${dog.winProb.toFixed(1)}%</strong></span>
+                            <button onclick="openPlaceBetModal('${dog.name.replace(/'/g, "\\'")}', '${window.activeRaceKey.replace(/'/g, "\\'")}', '${activeRace.raceNumber || 1}', ${dog.winDiv}, ${dog.placeDiv})" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-2.5 rounded text-xs shadow transition-colors">💰 Bet</button>
+                        </div>
                         <span class="block text-slate-500 dark:text-slate-400 text-xs mt-1"><strong>Avg Time: <span class="font-mono text-slate-800 dark:text-slate-200">${dog.avgTrackDistTime}s</span></strong> | <strong>Avg 1Sec: <span class="font-mono text-slate-800 dark:text-slate-200">${dog.avgTrackDistSplit}s</span></strong> | ${marginDisplay}</span>
                         <span class="block text-slate-400 dark:text-slate-500 text-[11px]">Early Pos: ${dog.avgEarly} | Gain: <strong class="text-green-600 dark:text-green-400">+${dog.avgGain}</strong> | Best Time: <span class="font-mono">${dog.bestTime}s</span> | Best 1Sec: <span class="font-mono">${dog.best1Sec}s</span></span>
                     </div>
@@ -2722,6 +2897,9 @@ async function saveCurrentPredictions() {
         window.currentComputedResult.actualPlace3 = meeting.actualPlace3;
         window.currentComputedResult.actualPlace4 = meeting.actualPlace4;
 
+        let winningStarter = meeting.starters.find(s => s.starterName.toUpperCase() === meeting.actualWinner.toUpperCase() || s.placing === 1);
+        let officialWinDiv = winningStarter && winningStarter.winDiv > 0 ? winningStarter.winDiv : 0;
+
         let scoredDogsList = window.currentComputedResult.scoredDogs || [];
         let topPick = scoredDogsList.length > 0 ? scoredDogsList[0] : null;
         let activeCompetitorsCount = scoredDogsList.length;
@@ -2729,8 +2907,8 @@ async function saveCurrentPredictions() {
 
         if (topPick) {
             let topPickName = topPick.name || "";
-            if (meeting.actualWinner && meeting.actualWinner.toUpperCase() === topPickName.toUpperCase()) {
-                window.currentComputedResult.actualWinPayout = topPick.winDiv > 0 ? topPick.winDiv : 2.0;
+            if (meeting.actualWinner.toUpperCase() === topPickName.toUpperCase()) {
+                window.currentComputedResult.actualWinPayout = officialWinDiv > 0 ? officialWinDiv : (topPick.winDiv > 0 ? topPick.winDiv : 2.0);
             } else {
                 window.currentComputedResult.actualWinPayout = 0;
             }
@@ -2744,30 +2922,46 @@ async function saveCurrentPredictions() {
             }
 
             if (eligiblePlaceHit) {
-                window.currentComputedResult.actualPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
+                let topPickStarter = meeting.starters.find(s => s.starterName.toUpperCase() === topPickName.toUpperCase());
+                let officialPlaceDiv = topPickStarter && topPickStarter.placeDiv > 0 ? topPickStarter.placeDiv : (topPick.placeDiv > 0 ? topPick.placeDiv : 1.2);
+                window.currentComputedResult.actualPlacePayout = officialPlaceDiv;
             } else {
                 window.currentComputedResult.actualPlacePayout = 0;
             }
         }
     }
 
-    let currentTrack = (window.currentComputedResult.trackName || "").toUpperCase();
-    let currentRaceNum = String(window.currentComputedResult.raceNumber || "").trim();
+	let currentTrackClean = extractTrackNameFromSaved({ trackName: window.currentComputedResult.trackName }).toUpperCase();
+	let currentRaceNum = String(window.currentComputedResult.raceNumber || "").trim();
+	let currentDateRaw = String(window.currentComputedResult.raceDate || "").replace(/\D/g, "");
+	if (!currentDateRaw) {
+		let match = (window.currentComputedResult.trackName || "").match(/(\d{2}[./-]\d{2}[./-]\d{4}|\d{8})/);
+		if (match) currentDateRaw = match[1].replace(/\D/g, "");
+	}
 
-    let existingIndex = window.savedPredictions.findIndex(item => {
-        let itemTrack = (item.trackName || "").toUpperCase();
-        let itemRaceNum = String(item.raceNumber || "").trim();
-        let itemDate = String(item.raceDate || "").trim();
+	let existingIndex = window.savedPredictions.findIndex(item => {
+		let itemTrackClean = extractTrackNameFromSaved(item).toUpperCase();
+		let itemRaceNum = String(item.raceNumber || "").trim();
+		if (!itemRaceNum || itemRaceNum === "N/A") {
+			let match = (item.trackName || "").match(/RACE\s*(\d+)/i);
+			if (match) itemRaceNum = match[1];
+		}
+		let itemDateRaw = String(item.raceDate || extractDateFromSaved(item) || "").replace(/\D/g, "");
+		if (!itemDateRaw) {
+			let match = (item.trackName || "").match(/(\d{2}[./-]\d{2}[./-]\d{4}|\d{8})/);
+			if (match) itemDateRaw = match[1].replace(/\D/g, "");
+		}
 
-        let trackMatch = itemTrack.includes(currentTrack) || currentTrack.includes(itemTrack);
-        let raceNumMatch = (itemRaceNum && currentRaceNum && itemRaceNum === currentRaceNum) ||
-                           new RegExp(`\\bRACE\\s*${currentRaceNum}\\b`, 'i').test(itemTrack) ||
-                           new RegExp(`\\bRACE\\s*${itemRaceNum}\\b`, 'i').test(currentTrack);
-        
-        let dateMatch = (!itemDate || !currentDate) ? true : itemDate === currentDate;
+		let trackMatch = itemTrackClean === currentTrackClean;
+		let raceNumMatch = itemRaceNum && currentRaceNum && itemRaceNum === currentRaceNum;
+		
+		let dateMatch = true;
+		if (itemDateRaw && currentDateRaw) {
+			dateMatch = itemDateRaw === currentDateRaw;
+		}
 
-        return trackMatch && raceNumMatch && dateMatch;
-    });
+		return trackMatch && raceNumMatch && dateMatch;
+	});
 
     if (existingIndex !== -1) {
         let existingItem = window.savedPredictions[existingIndex];
@@ -3161,7 +3355,7 @@ function renderSavedPredictions() {
         if (isTrifectaSettled && topPickName && secondPickName && thirdPickName) {
             let actualTopThree = [item.actualPlace1, item.actualPlace2, item.actualPlace3].map(n => (n || "").toUpperCase());
             let predictedTopThree = [topPickName.toUpperCase(), secondPickName.toUpperCase(), thirdPickName.toUpperCase()];
-            isTrifectaHit = actualTopThree.length === 3 && actualTopThree.every(dog => predictedTopThree.includes(dog));
+            isTrifectaHit = actualTopThree.length === 3 && actualTopThree.every(dog => actualTopThree.includes(dog));
         }
 
         let isFirst4Settled = isTrifectaSettled && item.actualPlace4 && item.actualPlace4.trim() !== "";
@@ -3616,50 +3810,50 @@ function showSavedPredictionDetails(index) {
     let analysisHtml = '';
     
 	if (item.weights) {
-			let w = item.weights;
-			let isBaseline = true;
-			let isSprint = true;
-			let isDistance = true;
+        let w = item.weights;
+        let isBaseline = true;
+        let isSprint = true;
+        let isDistance = true;
 
-			let defaultBaseline = { windiv: 0.4, besttime: 0.5, avgtime: 0.6, best1sec: 0.5, avg1sec: 0.5, earlypos: 0.4, closinggain: 0.4, boxbias: 0.5 };
-			let keys = ['windiv', 'besttime', 'avgtime', 'best1sec', 'avg1sec', 'earlypos', 'closinggain', 'boxbias'];
-			
-			keys.forEach(k => {
-				if (w[k] !== defaultBaseline[k]) isBaseline = false;
-				if (window.customPresets.sprint[k] !== w[k]) isSprint = false;
-				if (window.customPresets.distance[k] !== w[k]) isDistance = false;
-			});
+        let defaultBaseline = { windiv: 0.4, besttime: 0.5, avgtime: 0.6, best1sec: 0.5, avg1sec: 0.5, earlypos: 0.4, closinggain: 0.4, boxbias: 0.5 };
+        let keys = ['windiv', 'besttime', 'avgtime', 'best1sec', 'avg1sec', 'earlypos', 'closinggain', 'boxbias'];
+        
+        keys.forEach(k => {
+            if (w[k] !== defaultBaseline[k]) isBaseline = false;
+            if (window.customPresets.sprint[k] !== w[k]) isSprint = false;
+            if (window.customPresets.distance[k] !== w[k]) isDistance = false;
+        });
 
-			let badgeHtml = '';
-			if (isBaseline) {
-				badgeHtml = '<span class="bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-600 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚖️ Baseline Default</span>';
-			} else if (isSprint) {
-				badgeHtml = '<span class="bg-sky-100 text-sky-800 border border-sky-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚡ Sprint Preset</span>';
-			} else if (isDistance) {
-				badgeHtml = '<span class="bg-purple-100 text-purple-800 border border-purple-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">🏆 Distance Preset</span>';
-			} else {
-				badgeHtml = '<span class="bg-amber-100 text-amber-800 border border-amber-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚙️ Custom</span>';
-			}
+        let badgeHtml = '';
+        if (isBaseline) {
+            badgeHtml = '<span class="bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-600 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚖️ Baseline Default</span>';
+        } else if (isSprint) {
+            badgeHtml = '<span class="bg-sky-100 text-sky-800 border border-sky-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚡ Sprint Preset</span>';
+        } else if (isDistance) {
+            badgeHtml = '<span class="bg-purple-100 text-purple-800 border border-purple-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">🏆 Distance Preset</span>';
+        } else {
+            badgeHtml = '<span class="bg-amber-100 text-amber-800 border border-amber-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider shadow-sm">⚙️ Custom</span>';
+        }
 
-			analysisHtml += `
-				<li class="mb-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-4 rounded-lg shadow-sm block">
-					<div class="flex justify-between items-center mb-3">
-						<span class="text-sm font-black text-slate-800 dark:text-white tracking-tight">Model Weights Configuration</span>
-						${badgeHtml}
-					</div>
-					<div class="grid grid-cols-4 sm:grid-cols-8 gap-2 text-[10px] font-mono text-center">
-						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">WinDiv</span><strong class="text-slate-900 dark:text-slate-100">${w.windiv}</strong></div>
-						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">BestTime</span><strong class="text-slate-900 dark:text-slate-100">${w.besttime}</strong></div>
-						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">AvgTime</span><strong class="text-slate-900 dark:text-slate-100">${w.avgtime}</strong></div>
-						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">Best1Sec</span><strong class="text-slate-900 dark:text-slate-100">${w.best1sec}</strong></div>
-						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">Avg1Sec</span><strong class="text-slate-900 dark:text-slate-100">${w.avg1sec}</strong></div>
-						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">EarlyPos</span><strong class="text-slate-900 dark:text-slate-100">${w.earlypos}</strong></div>
-						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">CloseGain</span><strong class="text-slate-900 dark:text-slate-100">${w.closinggain}</strong></div>
-						<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">BoxBias</span><strong class="text-slate-900 dark:text-slate-100">${w.boxbias}</strong></div>
-					</div>
-				</li>
-			`;
-		}
+        analysisHtml += `
+            <li class="mb-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-4 rounded-lg shadow-sm block">
+                <div class="flex justify-between items-center mb-3">
+                    <span class="text-sm font-black text-slate-800 dark:text-white tracking-tight">Model Weights Configuration</span>
+                    ${badgeHtml}
+                </div>
+                <div class="grid grid-cols-4 sm:grid-cols-8 gap-2 text-[10px] font-mono text-center">
+                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">WinDiv</span><strong class="text-slate-900 dark:text-slate-100">${w.windiv}</strong></div>
+                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">BestTime</span><strong class="text-slate-900 dark:text-slate-100">${w.besttime}</strong></div>
+                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">AvgTime</span><strong class="text-slate-900 dark:text-slate-100">${w.avgtime}</strong></div>
+                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">Best1Sec</span><strong class="text-slate-900 dark:text-slate-100">${w.best1sec}</strong></div>
+                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">Avg1Sec</span><strong class="text-slate-900 dark:text-slate-100">${w.avg1sec}</strong></div>
+                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">EarlyPos</span><strong class="text-slate-900 dark:text-slate-100">${w.earlypos}</strong></div>
+                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">CloseGain</span><strong class="text-slate-900 dark:text-slate-100">${w.closinggain}</strong></div>
+                    <div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded border border-slate-100 dark:border-slate-700"><span class="block text-slate-500 mb-0.5">BoxBias</span><strong class="text-slate-900 dark:text-slate-100">${w.boxbias}</strong></div>
+                </div>
+            </li>
+        `;
+    }
 
     let scoredDogs = item.scoredDogs || [];
     let scratchedDogs = item.scratchedDogs || [];
@@ -3790,6 +3984,553 @@ function closeSavedPredictionDetails() {
     }, 300); 
 }
 
+// User Betting & Bankroll Management functions
+function openWalletModal() {
+    let modal = document.getElementById('wallet-modal');
+    let modalContent = document.getElementById('wallet-modal-content');
+    modal.classList.remove('hidden');
+    void modal.offsetWidth;
+    modal.classList.remove('opacity-0');
+    modalContent.classList.remove('scale-95');
+}
+
+function closeWalletModal() {
+    let modal = document.getElementById('wallet-modal');
+    let modalContent = document.getElementById('wallet-modal-content');
+    modal.classList.add('opacity-0');
+    modalContent.classList.add('scale-95');
+    setTimeout(() => {
+        modal.classList.add('hidden');
+    }, 300);
+}
+
+async function submitWalletAction() {
+    let actionType = document.getElementById('wallet-action-type').value;
+    let amount = parseFloat(document.getElementById('wallet-action-amount').value);
+    if (isNaN(amount) || amount <= 0) {
+        showNotification("Please enter a valid amount.");
+        return;
+    }
+
+    if (!window.userWallet) window.userWallet = { balance: 1000.00, staked: 0.00, profit: 0.00 };
+    if (!window.userWallet.transactions) window.userWallet.transactions = [];
+
+    let timestampStr = new Date().toLocaleString();
+
+    if (actionType === 'deposit') {
+        window.userWallet.balance += amount;
+        window.userWallet.transactions.unshift({
+            id: Date.now(),
+            type: 'Deposit',
+            description: 'Funds Deposited to Wallet',
+            amount: amount,
+            balanceAfter: window.userWallet.balance,
+            timestamp: timestampStr
+        });
+        showNotification(`Successfully deposited $${amount.toFixed(2)}.`, "success");
+    } else if (actionType === 'withdraw') {
+        if (amount > window.userWallet.balance) {
+            showNotification("Insufficient funds in available balance for withdrawal.");
+            return;
+        }
+        window.userWallet.balance -= amount;
+        window.userWallet.transactions.unshift({
+            id: Date.now(),
+            type: 'Withdrawal',
+            description: 'Funds Withdrawn from Wallet',
+            amount: -amount,
+            balanceAfter: window.userWallet.balance,
+            timestamp: timestampStr
+        });
+        showNotification(`Successfully withdrew $${amount.toFixed(2)}.`, "success");
+    }
+
+    closeWalletModal();
+    await sortAndPersistMeetingsObject();
+    updateWalletDisplay();
+    renderTransactionHistory();
+}
+
+async function resetWalletData() {
+    if (confirm("Are you sure you want to reset your wallet balance and betting history?")) {
+        window.userWallet = { balance: 0.00, staked: 0.00, profit: 0.00 };
+        window.activeBets = [];
+        window.settledBets = [];
+        await sortAndPersistMeetingsObject();
+        updateWalletDisplay();
+        renderBettingTab();
+        showNotification("Wallet and betting history reset successfully.", "success");
+    }
+}
+
+function openPlaceBetModal(dogName, trackName, raceNum, winDiv, placeDiv) {
+    document.getElementById('bet-modal-dog-name').value = dogName;
+    document.getElementById('bet-modal-track-name').value = trackName;
+    document.getElementById('bet-modal-race-num').value = raceNum;
+    document.getElementById('bet-modal-windiv').value = winDiv;
+    document.getElementById('bet-modal-placediv').value = placeDiv;
+
+    document.getElementById('bet-lbl-runner').innerText = dogName;
+    
+    let raceObj = (window.allRaceMeetings && window.allRaceMeetings[trackName]) ? window.allRaceMeetings[trackName] : null;
+    let raceDate = raceObj && raceObj.raceDate ? raceObj.raceDate : "";
+
+    let displayText = trackName;
+
+    if (raceDate && !displayText.includes(raceDate)) {
+        displayText = `${trackName} (${raceDate})`;
+    }
+
+    document.getElementById('bet-lbl-meeting').innerText = displayText;
+    
+    document.getElementById('bet-modal-win-stake').value = "";
+    document.getElementById('bet-modal-place-stake').value = "";
+
+    updateCombinedBetCalculation();
+
+    let modal = document.getElementById('place-bet-modal');
+    let modalContent = document.getElementById('place-bet-modal-content');
+    modal.classList.remove('hidden');
+    void modal.offsetWidth;
+    modal.classList.remove('opacity-0');
+    modalContent.classList.remove('scale-95');
+}
+
+function closePlaceBetModal() {
+    let modal = document.getElementById('place-bet-modal');
+    let modalContent = document.getElementById('place-bet-modal-content');
+    modal.classList.add('opacity-0');
+    modalContent.classList.add('scale-95');
+    setTimeout(() => {
+        modal.classList.add('hidden');
+    }, 300);
+}
+
+function updateCombinedBetCalculation() {
+    let winStake = parseFloat(document.getElementById('bet-modal-win-stake').value) || 0;
+    let placeStake = parseFloat(document.getElementById('bet-modal-place-stake').value) || 0;
+    let winDiv = parseFloat(document.getElementById('bet-modal-windiv').value) || 0;
+    let placeDiv = parseFloat(document.getElementById('bet-modal-placediv').value) || 0;
+
+    let estWinReturn = winStake * winDiv;
+    let estPlaceReturn = placeStake * placeDiv;
+
+    document.getElementById('bet-lbl-win-return').innerText = `$${estWinReturn.toFixed(2)}`;
+    document.getElementById('bet-lbl-place-return').innerText = `$${estPlaceReturn.toFixed(2)}`;
+}
+
+async function confirmAndPlaceBet() {
+    let dogName = document.getElementById('bet-modal-dog-name').value;
+    let trackName = document.getElementById('bet-modal-track-name').value;
+    let raceNum = document.getElementById('bet-modal-race-num').value;
+    
+    let winStake = parseFloat(document.getElementById('bet-modal-win-stake').value) || 0;
+    let placeStake = parseFloat(document.getElementById('bet-modal-place-stake').value) || 0;
+    let winDiv = parseFloat(document.getElementById('bet-modal-windiv').value) || 0;
+    let placeDiv = parseFloat(document.getElementById('bet-modal-placediv').value) || 0;
+
+    let totalStakeNeeded = winStake + placeStake;
+
+    if (totalStakeNeeded <= 0) {
+        showNotification("Please enter a valid stake for Win or Place.");
+        return;
+    }
+
+    if (!window.userWallet) window.userWallet = { balance: 0.00, staked: 0.00, profit: 0.00 };
+    if (!window.userWallet.transactions) window.userWallet.transactions = [];
+
+    if (totalStakeNeeded > window.userWallet.balance) {
+        showNotification("Insufficient wallet balance for these combined stakes.");
+        return;
+    }
+
+    window.userWallet.balance -= totalStakeNeeded;
+    window.userWallet.staked += totalStakeNeeded;
+
+    let timestampStr = new Date().toLocaleString();
+    let betsPlacedCount = 0;
+
+    if (winStake > 0) {
+        window.activeBets.push({
+            id: Date.now() + Math.random(),
+            dogName: dogName,
+            trackName: trackName,
+            raceNum: raceNum,
+            betType: 'Win',
+            stake: winStake,
+            odds: winDiv,
+            estReturn: winStake * winDiv,
+            timestamp: timestampStr,
+            status: 'active'
+        });
+        window.userWallet.transactions.unshift({
+            id: Date.now() + Math.random(),
+            type: 'Bet Stake',
+            description: `Win Bet: ${dogName} (${trackName})`,
+            amount: -winStake,
+            balanceAfter: window.userWallet.balance,
+            timestamp: timestampStr
+        });
+        betsPlacedCount++;
+    }
+
+    if (placeStake > 0) {
+        window.activeBets.push({
+            id: Date.now() + Math.random() + 1,
+            dogName: dogName,
+            trackName: trackName,
+            raceNum: raceNum,
+            betType: 'Place',
+            stake: placeStake,
+            odds: placeDiv,
+            estReturn: placeStake * placeDiv,
+            timestamp: timestampStr,
+            status: 'active'
+        });
+        window.userWallet.transactions.unshift({
+            id: Date.now() + Math.random() + 1,
+            type: 'Bet Stake',
+            description: `Place Bet: ${dogName} (${trackName})`,
+            amount: -placeStake,
+            balanceAfter: window.userWallet.balance,
+            timestamp: timestampStr
+        });
+        betsPlacedCount++;
+    }
+
+    closePlaceBetModal();
+    await sortAndPersistMeetingsObject();
+    updateWalletDisplay();
+    renderBettingTab();
+    renderTransactionHistory();
+    showNotification(`Successfully placed ${betsPlacedCount} bet(s) on ${dogName} for a total of $${totalStakeNeeded.toFixed(2)}!`, "success");
+}
+
+function updateWalletDisplay() {
+    let totalStakedActive = window.activeBets.reduce((acc, b) => acc + b.stake, 0);
+    window.userWallet.staked = totalStakedActive;
+
+    let netProfit = window.settledBets.reduce((acc, b) => acc + (b.payout - b.stake), 0);
+    window.userWallet.profit = netProfit;
+
+    let totalTurnoverSettled = window.settledBets.reduce((acc, b) => acc + b.stake, 0);
+    let walletRoi = totalTurnoverSettled > 0 ? (netProfit / totalTurnoverSettled) * 100 : 0;
+
+    let totalSettledCount = window.settledBets.length;
+    let winBetsSettled = window.settledBets.filter(b => b.betType === 'Win');
+    let placeBetsSettled = window.settledBets.filter(b => b.betType === 'Place');
+
+    let winHits = winBetsSettled.filter(b => b.payout > 0).length;
+    let placeHits = placeBetsSettled.filter(b => b.payout > 0).length;
+    
+    let totalWinsHit = window.settledBets.filter(b => b.payout > 0).length;
+
+    let winStrike = winBetsSettled.length > 0 ? (winHits / winBetsSettled.length) * 100 : 0;
+    let placeStrike = placeBetsSettled.length > 0 ? (placeHits / placeBetsSettled.length) * 100 : 0;
+    let combinedStrike = totalSettledCount > 0 ? (totalWinsHit / totalSettledCount) * 100 : 0;
+
+    document.getElementById('wallet-balance-display').innerText = `$${window.userWallet.balance.toFixed(2)}`;
+    document.getElementById('wallet-staked-display').innerText = `$${window.userWallet.staked.toFixed(2)}`;
+    
+    let profitEl = document.getElementById('wallet-profit-display');
+    profitEl.innerText = `${netProfit >= 0 ? '+' : ''}$${netProfit.toFixed(2)}`;
+    profitEl.className = `text-xl font-black font-mono ${netProfit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`;
+
+    let roiEl = document.getElementById('wallet-roi-display');
+    roiEl.innerText = `${walletRoi >= 0 ? '+' : ''}${walletRoi.toFixed(1)}%`;
+    roiEl.className = `text-xl font-black font-mono ${walletRoi >= 0 ? 'text-purple-600 dark:text-purple-400' : 'text-red-600 dark:text-red-400'}`;
+
+    document.getElementById('wallet-win-strike-display').innerText = `${winStrike.toFixed(1)}% (${winHits}/${winBetsSettled.length})`;
+    document.getElementById('wallet-place-strike-display').innerText = `${placeStrike.toFixed(1)}% (${placeHits}/${placeBetsSettled.length})`;
+    document.getElementById('wallet-combined-strike-display').innerText = `${combinedStrike.toFixed(1)}% (${totalWinsHit}/${totalSettledCount})`;
+}
+
+// --- ADDED MISSING HELPER FUNCTION TO FIX REFERENCE ERROR ---
+function extractBetDate(bet) {
+    if (bet.trackName) {
+        let matchParen = bet.trackName.match(/\(([^)]+)\)/);
+        if (matchParen && matchParen[1].includes('.')) {
+            return matchParen[1].trim().replace(/\./g, '/');
+        }
+    }
+    let rawTime = bet.timestamp || bet.date || "";
+    if (rawTime) {
+        let match = String(rawTime).match(/\b\d{4}-\d{2}-\d{2}\b/) || String(rawTime).match(/\b\d{1,2}\/\d{1,2}\/\d{4}\b/);
+        if (match) return match[0];
+        return String(rawTime).split(',')[0].split(' ')[0].trim();
+    }
+    return "";
+}
+
+function populateUserBetFilterDropdowns() {
+    let trackSelect = document.getElementById('filter-user-track-select');
+    let dateSelect = document.getElementById('filter-user-date-select');
+    if (!trackSelect || !dateSelect) return;
+
+    let currentTrackVal = trackSelect.value ? String(trackSelect.value).trim().toUpperCase() : "";
+    let currentDateVal = dateSelect.value ? String(dateSelect.value).trim() : "";
+
+    let tracks = new Set();
+    let dates = new Set();
+
+    let allBets = [...(window.activeBets || []), ...(window.settledBets || [])];
+
+    const getCleanTrackName = (rawTrack) => {
+        if (!rawTrack) return "";
+        let track = String(rawTrack).toUpperCase().trim();
+        if (track.includes(" - ")) track = track.split(" - ")[0].trim();
+        let parts = track.split("RACE");
+        if (parts.length > 1) track = parts[0].trim();
+        return track;
+    };
+
+    allBets.forEach(bet => {
+        if (bet && bet.trackName) {
+            let cleanTrack = getCleanTrackName(bet.trackName);
+            if (cleanTrack) tracks.add(cleanTrack);
+        }
+    });
+
+    trackSelect.innerHTML = `<option value="">All Tracks</option>`;
+    Array.from(tracks).sort().forEach(t => {
+        let opt = document.createElement('option');
+        opt.value = t;
+        opt.innerText = t;
+        if (t === currentTrackVal) opt.selected = true;
+        trackSelect.appendChild(opt);
+    });
+
+    allBets.forEach(bet => {
+        if (bet) {
+            let betCleanTrack = getCleanTrackName(bet.trackName);
+            let datePart = extractBetDate(bet);
+            
+            if (!currentTrackVal || betCleanTrack === currentTrackVal) {
+                if (datePart && datePart !== "N/A" && datePart.length > 3) {
+                    dates.add(datePart);
+                }
+            }
+        }
+    });
+
+    if (dates.size === 0) {
+        allBets.forEach(bet => {
+            let datePart = extractBetDate(bet);
+            if (datePart) dates.add(datePart);
+        });
+    }
+
+    dateSelect.innerHTML = `<option value="">All Dates</option>`;
+    Array.from(dates).sort().reverse().forEach(d => {
+        let opt = document.createElement('option');
+        opt.value = d;
+        opt.innerText = d;
+        if (d === currentDateVal) opt.selected = true;
+        dateSelect.appendChild(opt);
+    });
+}
+
+function resetUserBetFilters() {
+    let trackSelect = document.getElementById('filter-user-track-select');
+    let dateSelect = document.getElementById('filter-user-date-select');
+    if (trackSelect) trackSelect.value = "";
+    if (dateSelect) dateSelect.value = "";
+    populateUserBetFilterDropdowns();
+    renderBettingTab();
+}
+
+function renderBettingTab() {
+    updateWalletDisplay();
+    populateUserBetFilterDropdowns();
+
+    let trackSelectEl = document.getElementById('filter-user-track-select');
+    let dateSelectEl = document.getElementById('filter-user-date-select');
+    
+    let selectedTrack = trackSelectEl && trackSelectEl.value ? String(trackSelectEl.value).trim().toUpperCase() : "";
+    let selectedDate = dateSelectEl && dateSelectEl.value ? String(dateSelectEl.value).trim() : "";
+
+    const getCleanTrackName = (rawTrack) => {
+        if (!rawTrack) return "";
+        let track = String(rawTrack).toUpperCase().trim();
+        if (track.includes(" - ")) track = track.split(" - ")[0].trim();
+        let parts = track.split("RACE");
+        if (parts.length > 1) track = parts[0].trim();
+        return track;
+    };
+
+    const sortBetsComparator = (a, b) => {
+        let dateA = extractBetDate(a);
+        let dateB = extractBetDate(b);
+        let dateComp = dateB.localeCompare(dateA);
+        if (dateComp !== 0) return dateComp;
+
+        let trackA = a && a.trackName ? getCleanTrackName(a.trackName) : "";
+        let trackB = b && b.trackName ? getCleanTrackName(b.trackName) : "";
+        let trackComp = trackA.localeCompare(trackB);
+        if (trackComp !== 0) return trackComp;
+
+        const extractRaceNum = (bet) => {
+            if (bet.raceNum !== undefined && !isNaN(parseInt(bet.raceNum))) {
+                return parseInt(bet.raceNum);
+            }
+            let match = String(bet.trackName || "").match(/RACE\s*(\d+)/i);
+            return match ? parseInt(match[1]) : 0;
+        };
+
+        let raceA = extractRaceNum(a);
+        let raceB = extractRaceNum(b);
+        return raceB - raceA;
+    };
+
+    let filteredActive = (window.activeBets || []).filter(bet => {
+        if (!bet) return false;
+        if (!selectedTrack && !selectedDate) return true;
+
+        let betTrack = getCleanTrackName(bet.trackName);
+        let betDate = extractBetDate(bet);
+
+        let trackMatch = !selectedTrack || betTrack === selectedTrack;
+        let dateMatch = !selectedDate || betDate === selectedDate;
+        return trackMatch && dateMatch;
+    });
+
+    const activeContainer = document.getElementById('active-bets-container');
+    if (activeContainer) {
+        if (filteredActive.length === 0) {
+            activeContainer.innerHTML = `<p class="text-xs text-slate-400 italic">No active bets match your selected filters.</p>`;
+        } else {
+            let sortedActive = [...filteredActive].sort(sortBetsComparator);
+            let html = '';
+            sortedActive.forEach((bet) => {
+                let originalActiveIdx = window.activeBets.indexOf(bet);
+                html += `
+                    <div class="bg-slate-50 dark:bg-slate-800 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-3">
+                        <div>
+                            <div class="font-black text-slate-900 dark:text-white text-sm">${bet.dogName || "Unknown"} <span class="font-normal font-mono text-slate-500">(${bet.betType || "Win"})</span></div>
+                            <div class="text-[11px] text-slate-500 mt-0.5">${bet.trackName || ""} • Staked: <strong class="text-slate-800 dark:text-slate-200">$${(bet.stake || 0).toFixed(2)}</strong></div>
+                        </div>
+                        <div class="flex items-center gap-3 flex-wrap w-full sm:w-auto justify-between sm:justify-end">
+                            <div class="flex items-center gap-1.5">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Odds:</label>
+                                <input type="number" step="0.1" value="${bet.odds || 0}" onchange="updateActiveBetOdds(${originalActiveIdx}, this.value)" class="w-20 text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none"/>
+                            </div>
+                            <div class="text-right">
+                                <span class="block text-[10px] text-slate-400 uppercase font-bold">Est. Return</span>
+                                <span class="font-mono font-bold text-green-600 dark:text-green-400">$${(bet.estReturn || 0).toFixed(2)}</span>
+                            </div>
+                            <button onclick="cancelActiveBet(${originalActiveIdx})" class="text-xs text-red-600 hover:text-red-800 font-bold px-2 py-1 rounded border border-red-200 hover:bg-red-50 transition-colors">Cancel</button>
+                        </div>
+                    </div>
+                `;
+            });
+            activeContainer.innerHTML = html;
+        }
+    }
+
+    let filteredSettled = (window.settledBets || []).filter(bet => {
+        if (!bet) return false;
+        if (!selectedTrack && !selectedDate) return true;
+
+        let betTrack = getCleanTrackName(bet.trackName);
+        let betDate = extractBetDate(bet);
+
+        let trackMatch = !selectedTrack || betTrack === selectedTrack;
+        let dateMatch = !selectedDate || betDate === selectedDate;
+        return trackMatch && dateMatch;
+    });
+
+    const settledContainer = document.getElementById('settled-bets-container');
+    if (settledContainer) {
+        if (filteredSettled.length === 0) {
+            settledContainer.innerHTML = `<p class="text-xs text-slate-400 italic">No settled bets match your selected filters.</p>`;
+        } else {
+            let sortedSettled = [...filteredSettled].sort(sortBetsComparator);
+            let html = '';
+            sortedSettled.forEach((bet) => {
+                let originalSettledIdx = window.settledBets.indexOf(bet);
+                let stake = bet.stake || 0;
+                let payout = bet.payout || 0;
+                let profit = payout - stake;
+                let isWin = profit > 0;
+                let badgeClass = isWin ? 'bg-green-100 text-green-800 dark:bg-green-950/60 dark:text-green-300 border-green-300' : 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300 border-red-300';
+                
+                html += `
+                    <div class="bg-slate-50 dark:bg-slate-800 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-3">
+                        <div>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="font-black text-slate-900 dark:text-white text-sm">${bet.dogName || "Unknown"} (${bet.betType || "Win"})</span>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${badgeClass}">${isWin ? 'Won' : 'Lost'}</span>
+                            </div>
+                            <div class="text-[11px] text-slate-500 mt-0.5">${bet.trackName || ""} • Stake: $${stake.toFixed(2)}</div>
+                        </div>
+                        <div class="flex items-center gap-3 flex-wrap w-full sm:w-auto justify-between sm:justify-end">
+                            <div class="flex items-center gap-1.5">
+                                <label class="text-[10px] font-bold text-slate-500 uppercase">Payout ($):</label>
+                                <input type="number" step="0.1" value="${payout.toFixed(2)}" onchange="updateSettledBetPayout(${originalSettledIdx}, this.value)" class="w-24 text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none" title="Manually override total payout amount"/>
+                            </div>
+                            <div class="text-right">
+                                <span class="block text-[10px] text-slate-400 uppercase font-bold">Profit / Loss</span>
+                                <span class="font-mono font-bold ${profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}">
+                                    ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}
+                                </span>
+                            </div>
+                            <button onclick="deleteSettledBet(${originalSettledIdx})" class="text-xs text-red-600 hover:text-red-800 font-bold px-2 py-1 rounded border border-red-200 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors" title="Delete Settled Bet">🗑️</button>
+                        </div>
+                    </div>
+                `;
+            });
+            settledContainer.innerHTML = html;
+        }
+    }
+}
+
+async function updateActiveBetOdds(index, newOddsVal) {
+    if (window.activeBets[index]) {
+        let odds = parseFloat(newOddsVal) || 0;
+        window.activeBets[index].odds = odds;
+        window.activeBets[index].estReturn = window.activeBets[index].stake * odds;
+        await sortAndPersistMeetingsObject();
+        renderBettingTab();
+    }
+}
+
+async function updateSettledBetPayout(index, newPayoutVal) {
+    if (window.settledBets[index]) {
+        let newPayout = parseFloat(newPayoutVal) || 0;
+        window.settledBets[index].payout = newPayout;
+        window.settledBets[index].won = newPayout > 0;
+        await sortAndPersistMeetingsObject();
+        renderBettingTab();
+        updateWalletDisplay();
+        showNotification("Settled bet payout updated successfully!", "success");
+    }
+}
+
+async function cancelActiveBet(index) {
+    if (index < 0 || index >= window.activeBets.length) return;
+    let bet = window.activeBets[index];
+    
+    window.userWallet.balance += bet.stake;
+    window.activeBets.splice(index, 1);
+    
+    await sortAndPersistMeetingsObject();
+    renderBettingTab();
+    showNotification("Bet cancelled and stake refunded.", "info");
+}
+
+async function clearSettledBets() {
+    if (window.settledBets.length === 0) {
+        showNotification("No settled bets to clear.");
+        return;
+    }
+    if (confirm("Are you sure you want to clear settled betting history?")) {
+        window.settledBets = [];
+        await sortAndPersistMeetingsObject();
+        renderBettingTab();
+        showNotification("Settled betting history cleared.");
+    }
+}
+
 function highlightBottomNav(btnElement) {
     const navButtons = document.querySelectorAll('.nav-icon-btn');
     navButtons.forEach(btn => {
@@ -3799,5 +4540,90 @@ function highlightBottomNav(btnElement) {
     if (btnElement) {
         btnElement.classList.remove('text-slate-500', 'dark:text-slate-400', 'font-medium');
         btnElement.classList.add('text-slate-900', 'dark:text-white', 'font-bold');
+    }
+}
+
+function renderTransactionHistory() {
+    const container = document.getElementById('transaction-history-container');
+    if (!container) return;
+
+    if (!window.userWallet.transactions || window.userWallet.transactions.length === 0) {
+        container.innerHTML = `<p class="text-xs text-slate-400 italic">No transactions recorded yet.</p>`;
+        return;
+    }
+
+    let html = '';
+    window.userWallet.transactions.forEach(tx => {
+        let isPositive = tx.amount >= 0;
+        let badgeColor = '';
+
+        if (tx.type === 'Withdrawal') {
+            badgeColor = 'text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-800';
+        } else if (isPositive) {
+            badgeColor = 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/40 border-green-200 dark:border-green-800';
+        } else {
+            badgeColor = 'text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700';
+        }
+
+        let sign = isPositive ? '+' : '';
+
+        html += `
+            <div class="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex justify-between items-center text-xs">
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="font-black text-slate-900 dark:text-white">${tx.type}</span>
+                        <span class="text-[10px] font-mono px-2 py-0.5 rounded border ${badgeColor}">${tx.description}</span>
+                    </div>
+                    <span class="text-[11px] font-mono text-slate-400 mt-0.5 block">${tx.timestamp || 'Unknown Date'}</span>
+                </div>
+                <div class="text-right font-mono">
+                    <span class="block font-bold text-sm ${isPositive ? 'text-green-600 dark:text-green-400' : 'text-slate-800 dark:text-slate-200'}">${sign}$${tx.amount.toFixed(2)}</span>
+                    <span class="text-[10px] text-slate-400">Balance: $${tx.balanceAfter.toFixed(2)}</span>
+                </div>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+}
+
+async function clearTransactionHistory() {
+    if (confirm("Are you sure you want to clear your transaction history ledger?")) {
+        window.userWallet.transactions = [];
+        await sortAndPersistMeetingsObject();
+        renderTransactionHistory();
+        showNotification("Transaction ledger cleared.", "success");
+    }
+}
+
+function openTransactionModal() {
+    renderTransactionHistory();
+    let modal = document.getElementById('transaction-modal');
+    let modalContent = document.getElementById('transaction-modal-content');
+    
+    modal.classList.remove('hidden');
+    void modal.offsetWidth;
+    modal.classList.remove('opacity-0');
+    modalContent.classList.remove('scale-95');
+}
+
+function closeTransactionModal() {
+    let modal = document.getElementById('transaction-modal');
+    let modalContent = document.getElementById('transaction-modal-content');
+    
+    modal.classList.add('opacity-0');
+    modalContent.classList.add('scale-95');
+    
+    setTimeout(() => {
+        modal.classList.add('hidden');
+    }, 300);
+}
+
+async function deleteSettledBet(index) {
+    if (index < 0 || index >= window.settledBets.length) return;
+    if (confirm("Are you sure you want to delete this settled bet record?")) {
+        window.settledBets.splice(index, 1);
+        await sortAndPersistMeetingsObject();
+        renderBettingTab();
+        showNotification("Settled bet deleted.", "info");
     }
 }
