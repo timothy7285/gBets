@@ -385,7 +385,18 @@
                     </div>
                     <button onclick="resetSavedFilters()" class="text-xs font-bold text-slate-500 underline">Reset Filters</button>
                 </div>
-
+				<!-- Exac / Tri / First 4 Filtered Tally Line -->
+				<div class="bg-slate-50 dark:bg-slate-800 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 mb-3 flex items-center justify-between text-xs font-mono">
+					<span class="font-bold text-slate-700 dark:text-slate-300">Exotic Tallies:</span>
+					<div class="flex items-center gap-8">
+						<span>Exac: <strong id="tally-exac" class="text-indigo-600 dark:text-indigo-400 font-bold">0 / 0</strong></span>
+						<span>•</span>
+						<span>Tri: <strong id="tally-tri" class="text-purple-600 dark:text-purple-400 font-bold">0 / 0</strong></span>
+						<span>•</span>
+						<span>First 4: <strong id="tally-first4" class="text-teal-600 dark:text-teal-400 font-bold">0 / 0</strong></span>
+					</div>
+				</div>
+				
                 <div id="performance-metrics-banner" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 mb-4 bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs">
                     <div class="bg-white dark:bg-slate-900 p-2.5 rounded border border-slate-200 dark:border-slate-700">
                         <span class="block font-bold text-slate-500 uppercase tracking-wider text-[10px]">Win ROI</span>
@@ -838,50 +849,72 @@
         </div>
     </div>
 
-  	<!-- Place Bet Modal -->
-	<div id="place-bet-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
-		<div id="place-bet-modal-content" class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 transform scale-95 transition-transform duration-300">
-			<div class="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
-				<h3 class="text-base font-black text-slate-900 dark:text-white uppercase tracking-wider">Win + Place bet</h3>
-				<button onclick="closePlaceBetModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold text-lg">&times;</button>
-			</div>
-			
-			<input type="hidden" id="bet-modal-dog-name">
-			<input type="hidden" id="bet-modal-track-name">
-			<input type="hidden" id="bet-modal-race-num">
-			<input type="hidden" id="bet-modal-windiv">
-			<input type="hidden" id="bet-modal-placediv">
+<!-- Place Bet Modal -->
+<div id="place-bet-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+    <div id="place-bet-modal-content" class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 transform scale-95 transition-transform duration-300">
+        <div class="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+            <h3 class="text-base font-black text-slate-900 dark:text-white uppercase tracking-wider">Win + Place bet</h3>
+            <button onclick="closePlaceBetModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold text-lg">&times;</button>
+        </div>
+        
+        <input type="hidden" id="bet-modal-dog-name">
+        <input type="hidden" id="bet-modal-track-name">
+        <input type="hidden" id="bet-modal-race-num">
+        <input type="hidden" id="bet-modal-windiv">
+        <input type="hidden" id="bet-modal-placediv">
 
-			<div class="space-y-4 text-sm">
-				<div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
-					<span class="block text-xs text-slate-400 uppercase font-bold">Selected Runner</span>
-					<span id="bet-lbl-runner" class="font-black text-slate-900 dark:text-white text-base">--</span>
-					<span id="bet-lbl-meeting" class="block text-xs font-mono text-slate-500 mt-0.5">--</span>
-				</div>
+        <div class="space-y-4 text-sm">
+            <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                <span class="block text-xs text-slate-400 uppercase font-bold">Selected Runner</span>
+                <span id="bet-lbl-runner" class="font-black text-slate-900 dark:text-white text-base">--</span>
+                <span id="bet-lbl-meeting" class="block text-xs font-mono text-slate-500 mt-0.5">--</span>
+            </div>
 
-				<div class="grid grid-cols-2 gap-3">
-					<div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
-						<label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Win Stake ($)</label>
-						<input type="number" id="bet-modal-win-stake" min="0" step="1" oninput="updateCombinedBetCalculation()" class="w-full text-sm px-3 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none">
-						<span class="block text-[11px] text-slate-500 mt-1">Est. Return: <strong id="bet-lbl-win-return" class="text-green-600 dark:text-green-400 font-mono">$0.00</strong></span>
-					</div>
-					<div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
-						<label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Place Stake ($)</label>
-						<input type="number" id="bet-modal-place-stake" min="0" step="1" oninput="updateCombinedBetCalculation()" class="w-full text-sm px-3 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none">
-						<span class="block text-[11px] text-slate-500 mt-1">Est. Return: <strong id="bet-lbl-place-return" class="text-blue-600 dark:text-blue-400 font-mono">$0.00</strong></span>
-					</div>
-				</div>
+            <!-- Stake Inputs -->
+            <div class="grid grid-cols-2 gap-3">
+                <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <label for="winStakeInput" class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Win Stake ($)</label>
+                    <input type="number" id="winStakeInput" min="0" step="0.1" oninput="updateCombinedBetCalculation()" class="w-full text-sm px-3 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none" placeholder="0.00">
+                    <span class="block text-[11px] text-slate-500 mt-1">Est. Return: <strong id="bet-lbl-win-return" class="text-green-600 dark:text-green-400 font-mono">$0.00</strong></span>
+                </div>
+                <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <label for="placeStakeInput" class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Place Stake ($)</label>
+                    <input type="number" id="placeStakeInput" min="0" step="0.1" oninput="updateCombinedBetCalculation()" class="w-full text-sm px-3 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none" placeholder="0.00">
+                    <span class="block text-[11px] text-slate-500 mt-1">Est. Return: <strong id="bet-lbl-place-return" class="text-blue-600 dark:text-blue-400 font-mono">$0.00</strong></span>
+                </div>
+            </div>
 
-				<div class="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-					<button onclick="closePlaceBetModal()" class="px-4 py-2 rounded text-xs font-bold bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors">Cancel</button>
-					<!-- Inside your Place Bet Modal HTML -->
-					<button onclick="confirmAndPlaceBet()" type="button" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 px-4 rounded-lg shadow transition-colors text-xs">
-						Confirm & Place Wager
-					</button>
-				</div>
-			</div>
-		</div>
-	</div>
+            <!-- Fixed Odds Override Section -->
+            <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                <div class="flex justify-between items-center">
+                    <span class="text-xs font-bold text-slate-700 dark:text-slate-300">Odds Locking / Fixed Rate</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="fixedOddsToggle">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+
+                <div id="fixedOddsInputsContainer" class="hidden grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+                    <div>
+                        <label for="fixedWinOddsInput" class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Fixed Win Odds</label>
+                        <input type="number" id="fixedWinOddsInput" step="0.01" class="w-full text-sm px-3 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none" placeholder="e.g. 3.50">
+                    </div>
+                    <div>
+                        <label for="fixedPlaceOddsInput" class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Fixed Place Odds</label>
+                        <input type="number" id="fixedPlaceOddsInput" step="0.01" class="w-full text-sm px-3 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none" placeholder="e.g. 1.60">
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                <button onclick="closePlaceBetModal()" class="px-4 py-2 rounded text-xs font-bold bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors">Cancel</button>
+                <button onclick="confirmAndPlaceBet()" type="button" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 px-4 rounded-lg shadow transition-colors text-xs">
+                    Confirm & Place Wager
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 
     <!-- Wallet Deposit/Withdraw Modal -->
     <div id="wallet-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">

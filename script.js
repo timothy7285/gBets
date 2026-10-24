@@ -1289,7 +1289,7 @@ async function checkAutoFillPostRaceResults() {
                                        ((matchingMeeting.actualWinner && matchingMeeting.actualWinner.trim() !== "") || 
                                         matchingMeeting.starters.some(s => Number(s.placing) === 1));
 
-        if (hasValidOfficialResults) {
+		if (hasValidOfficialResults) {
             let won = false;
             let payout = 0;
 
@@ -1298,11 +1298,17 @@ async function checkAutoFillPostRaceResults() {
             let payoutTier = activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only");
             let podium = [matchingMeeting.actualPlace1, matchingMeeting.actualPlace2, matchingMeeting.actualPlace3].map(n => (n || "").toUpperCase());
 
+            // FIX: Lock in fixed odds if enabled, ignoring official race detail dividends completely
+            let oddsToUse = bet.isFixedOdds && bet.odds ? bet.odds : 0;
+
             if (bet.betType === 'Win') {
                 if (matchingMeeting.actualWinner && matchingMeeting.actualWinner.toUpperCase() === bet.dogName.toUpperCase()) {
                     won = true;
-                    let officialOdds = targetStarter && targetStarter.winDiv > 0 ? targetStarter.winDiv : bet.odds;
-                    payout = bet.stake * officialOdds;
+                    if (!bet.isFixedOdds || !bet.odds) {
+                        oddsToUse = targetStarter && targetStarter.winDiv > 0 ? targetStarter.winDiv : (bet.odds || 1.0);
+                    }
+                    payout = bet.stake * oddsToUse;
+                    bet.odds = oddsToUse; // Lock the settled odds
                 }
             } else if (bet.betType === 'Place') {
                 let eligiblePlaceHit = false;
@@ -1314,8 +1320,11 @@ async function checkAutoFillPostRaceResults() {
 
                 if (eligiblePlaceHit) {
                     won = true;
-                    let officialOdds = targetStarter && targetStarter.placeDiv > 0 ? targetStarter.placeDiv : (bet.odds > 0 ? bet.odds : 1.2);
-                    payout = bet.stake * officialOdds;
+                    if (!bet.isFixedOdds || !bet.odds) {
+                        oddsToUse = targetStarter && targetStarter.placeDiv > 0 ? targetStarter.placeDiv : (bet.odds > 0 ? bet.odds : 1.2);
+                    }
+                    payout = bet.stake * oddsToUse;
+                    bet.odds = oddsToUse; // Lock the settled odds
                 }
             }
 
@@ -3446,12 +3455,14 @@ function renderSavedPredictions() {
             isExactHit = actualTopTwo.length === 2 && actualTopTwo.every(dog => predictedTopTwo.includes(dog));
         }
 
-        let isTrifectaSettled = isExactSettled && item.actualPlace3 && item.actualPlace3.trim() !== "";
+		let isTrifectaSettled = isExactSettled && item.actualPlace3 && item.actualPlace3.trim() !== "";
         let isTrifectaHit = false;
         if (isTrifectaSettled && topPickName && secondPickName && thirdPickName) {
             let actualTopThree = [item.actualPlace1, item.actualPlace2, item.actualPlace3].map(n => (n || "").toUpperCase());
             let predictedTopThree = [topPickName.toUpperCase(), secondPickName.toUpperCase(), thirdPickName.toUpperCase()];
-            isTrifectaHit = actualTopThree.length === 3 && actualTopThree.every(dog => actualTopThree.includes(dog));
+            
+            // CORRECTED CHECK: Every predicted top pick must be present in the actual top 3 podium finish list
+            isTrifectaHit = predictedTopThree.every(dog => actualTopThree.includes(dog));
         }
 
         let isFirst4Settled = isTrifectaSettled && item.actualPlace4 && item.actualPlace4.trim() !== "";
@@ -3595,6 +3606,64 @@ function updatePerformanceMetrics(savedList) {
         let topPick = scoredDogsList.length > 0 ? (scoredDogsList[0].name || "") : "";
         return item.actualWinner.toUpperCase() === topPick.toUpperCase();
     }).length;
+
+    // --- EXOTIC TALLIES CALCULATION (EXAC, TRI, FIRST 4) ---
+    let exacSettledCount = 0;
+    let exacHits = 0;
+    let triSettledCount = 0;
+    let triHits = 0;
+    let first4SettledCount = 0;
+    let first4Hits = 0;
+
+    settled.forEach(item => {
+        let scoredDogsList = item.scoredDogs || [];
+        let topPickName = scoredDogsList.length > 0 ? (scoredDogsList[0].name || "") : "";
+        let secondPickName = scoredDogsList.length > 1 ? (scoredDogsList[1].name || "") : "";
+        let thirdPickName = scoredDogsList.length > 2 ? (scoredDogsList[2].name || "") : "";
+
+        // Exacta Check
+        let isExactSettled = item.actualWinner && item.actualWinner.trim() !== "" && item.actualPlace2 && item.actualPlace2.trim() !== "";
+        if (isExactSettled && topPickName && secondPickName) {
+            exacSettledCount++;
+            let actualTopTwo = [item.actualPlace1, item.actualPlace2].map(n => (n || "").toUpperCase());
+            let predictedTopTwo = [topPickName.toUpperCase(), secondPickName.toUpperCase()];
+            if (actualTopTwo.length === 2 && actualTopTwo.every(dog => predictedTopTwo.includes(dog))) {
+                exacHits++;
+            }
+        }
+
+        // Trifecta Check
+        let isTrifectaSettled = isExactSettled && item.actualPlace3 && item.actualPlace3.trim() !== "";
+        if (isTrifectaSettled && topPickName && secondPickName && thirdPickName) {
+            triSettledCount++;
+            let actualTopThree = [item.actualPlace1, item.actualPlace2, item.actualPlace3].map(n => (n || "").toUpperCase());
+            let predictedTopThree = [topPickName.toUpperCase(), secondPickName.toUpperCase(), thirdPickName.toUpperCase()];
+            if (predictedTopThree.every(dog => actualTopThree.includes(dog))) {
+                triHits++;
+            }
+        }
+
+        // First 4 Check
+        let isFirst4Settled = isTrifectaSettled && item.actualPlace4 && item.actualPlace4.trim() !== "";
+        if (isFirst4Settled && scoredDogsList.length >= 4) {
+            first4SettledCount++;
+            let actualTopFour = [item.actualPlace1, item.actualPlace2, item.actualPlace3, item.actualPlace4].map(n => (n || "").toUpperCase());
+            let predictedTopFour = scoredDogsList.slice(0, 4).map(d => (d.name || "").toUpperCase());
+            if (actualTopFour.length === 4 && predictedTopFour.every(dog => actualTopFour.includes(dog))) {
+                first4Hits++;
+            }
+        }
+    });
+
+    // Update Exotic Tallies UI Elements
+    let exacEl = document.getElementById('tally-exac');
+    let triEl = document.getElementById('tally-tri');
+    let first4El = document.getElementById('tally-first4');
+
+    if (exacEl) exacEl.innerText = `${exacHits} / ${exacSettledCount}`;
+    if (triEl) triEl.innerText = `${triHits} / ${triSettledCount}`;
+    if (first4El) first4El.innerText = `${first4Hits} / ${first4SettledCount}`;
+
     let winStrikeRate = totalSettled > 0 ? (winHits / totalSettled) * 100 : 0;
     let winTurnover = totalSettled * 1.0;
     let winReturn = settled.reduce((acc, item) => {
@@ -4164,66 +4233,82 @@ function openPlaceBetModal(dogName, trackName, raceNum, winDiv, placeDiv) {
     document.getElementById('bet-modal-track-name').value = trackName;
     document.getElementById('bet-modal-race-num').value = raceNum;
     document.getElementById('bet-modal-windiv').value = winDiv;
-    document.getElementById('bet-modal-placediv').value = placeDiv;
+    document.getElementById('bet-modal-placediv').value = placeDiv; // <--- FIXED HERE
 
     document.getElementById('bet-lbl-runner').innerText = dogName;
     
     let raceObj = (window.allRaceMeetings && window.allRaceMeetings[trackName]) ? window.allRaceMeetings[trackName] : null;
     let raceDate = raceObj && raceObj.raceDate ? raceObj.raceDate : "";
-
     let displayText = trackName;
-
     if (raceDate && !displayText.includes(raceDate)) {
         displayText = `${trackName} (${raceDate})`;
     }
-
     document.getElementById('bet-lbl-meeting').innerText = displayText;
     
-    document.getElementById('bet-modal-win-stake').value = "";
-    document.getElementById('bet-modal-place-stake').value = "";
+    let winStakeEl = document.getElementById('winStakeInput');
+    let placeStakeEl = document.getElementById('placeStakeInput');
+    let fixedWinEl = document.getElementById('fixedWinOddsInput');
+    let fixedPlaceEl = document.getElementById('fixedPlaceOddsInput');
+    let fixedToggle = document.getElementById('fixedOddsToggle');
+    let fixedContainer = document.getElementById('fixedOddsInputsContainer');
+
+    if (winStakeEl) winStakeEl.value = "";
+    if (placeStakeEl) placeStakeEl.value = "";
+    if (fixedWinEl) fixedWinEl.value = winDiv > 0 ? winDiv : "";
+    if (fixedPlaceEl) fixedPlaceEl.value = placeDiv > 0 ? placeDiv : "";
+    if (fixedToggle) fixedToggle.checked = false;
+    if (fixedContainer) fixedContainer.classList.add('hidden');
 
     updateCombinedBetCalculation();
 
     let modal = document.getElementById('place-bet-modal');
     let modalContent = document.getElementById('place-bet-modal-content');
-    modal.classList.remove('hidden');
-    void modal.offsetWidth;
-    modal.classList.remove('opacity-0');
-    modalContent.classList.remove('scale-95');
-}
-
-function closePlaceBetModal() {
-    let modal = document.getElementById('place-bet-modal');
-    let modalContent = document.getElementById('place-bet-modal-content');
-    modal.classList.add('opacity-0');
-    modalContent.classList.add('scale-95');
-    setTimeout(() => {
-        modal.classList.add('hidden');
-    }, 300);
+    if (modal && modalContent) {
+        modal.classList.remove('hidden');
+        void modal.offsetWidth;
+        modal.classList.remove('opacity-0');
+        modalContent.classList.remove('scale-95');
+    }
 }
 
 function updateCombinedBetCalculation() {
-    let winStake = parseFloat(document.getElementById('bet-modal-win-stake').value) || 0;
-    let placeStake = parseFloat(document.getElementById('bet-modal-place-stake').value) || 0;
-    let winDiv = parseFloat(document.getElementById('bet-modal-windiv').value) || 0;
-    let placeDiv = parseFloat(document.getElementById('bet-modal-placediv').value) || 0;
+    let winStakeEl = document.getElementById('winStakeInput');
+    let placeStakeEl = document.getElementById('placeStakeInput');
+    let winDivEl = document.getElementById('bet-modal-windiv');
+    let placeDivEl = document.getElementById('bet-modal-placediv');
+
+    let winStake = winStakeEl ? parseFloat(winStakeEl.value) || 0 : 0;
+    let placeStake = placeStakeEl ? parseFloat(placeStakeEl.value) || 0 : 0;
+    let winDiv = winDivEl ? parseFloat(winDivEl.value) || 0 : 0;
+    let placeDiv = placeDivEl ? parseFloat(placeDivEl.value) || 0 : 0;
 
     let estWinReturn = winStake * winDiv;
     let estPlaceReturn = placeStake * placeDiv;
 
-    document.getElementById('bet-lbl-win-return').innerText = `$${estWinReturn.toFixed(2)}`;
-    document.getElementById('bet-lbl-place-return').innerText = `$${estPlaceReturn.toFixed(2)}`;
+    let winRetEl = document.getElementById('bet-lbl-win-return');
+    let placeRetEl = document.getElementById('bet-lbl-place-return');
+
+    if (winRetEl) winRetEl.innerText = `$${estWinReturn.toFixed(2)}`;
+    if (placeRetEl) placeRetEl.innerText = `$${estPlaceReturn.toFixed(2)}`;
 }
 
 async function confirmAndPlaceBet() {
-    let dogName = document.getElementById('bet-modal-dog-name').value;
-    let trackName = document.getElementById('bet-modal-track-name').value;
-    let raceNum = document.getElementById('bet-modal-race-num').value;
+    let dogNameEl = document.getElementById('bet-modal-dog-name');
+    let trackNameEl = document.getElementById('bet-modal-track-name');
+    let raceNumEl = document.getElementById('bet-modal-race-num');
     
-    let winStake = parseFloat(document.getElementById('bet-modal-win-stake').value) || 0;
-    let placeStake = parseFloat(document.getElementById('bet-modal-place-stake').value) || 0;
-    let winDiv = parseFloat(document.getElementById('bet-modal-windiv').value) || 0;
-    let placeDiv = parseFloat(document.getElementById('bet-modal-placediv').value) || 0;
+    let dogName = dogNameEl ? dogNameEl.value : "Unknown";
+    let trackName = trackNameEl ? trackNameEl.value : "Unknown Track";
+    let raceNum = raceNumEl ? raceNumEl.value : "1";
+    
+    let winStake = parseFloat(document.getElementById('winStakeInput')?.value) || 0;
+    let placeStake = parseFloat(document.getElementById('placeStakeInput')?.value) || 0;
+    let winDiv = parseFloat(document.getElementById('bet-modal-windiv')?.value) || 0;
+    let placeDiv = parseFloat(document.getElementById('bet-modal-placediv')?.value) || 0;
+
+    let isFixed = document.getElementById('fixedOddsToggle')?.checked || false;
+    let fixedWinOdds = isFixed ? parseFloat(document.getElementById('fixedWinOddsInput')?.value) || winDiv : winDiv;
+    let fixedPlaceOdds = isFixed ? parseFloat(document.getElementById('fixedPlaceOddsInput')?.value) || placeDiv : placeDiv;
 
     let totalStakeNeeded = winStake + placeStake;
 
@@ -4254,8 +4339,10 @@ async function confirmAndPlaceBet() {
             raceNum: raceNum,
             betType: 'Win',
             stake: winStake,
-            odds: winDiv,
-            estReturn: winStake * winDiv,
+            odds: fixedWinOdds,
+            estReturn: winStake * fixedWinOdds,
+            isFixedOdds: isFixed,
+            fixedOdds: isFixed ? fixedWinOdds : null,
             timestamp: timestampStr,
             status: 'active'
         });
@@ -4278,8 +4365,10 @@ async function confirmAndPlaceBet() {
             raceNum: raceNum,
             betType: 'Place',
             stake: placeStake,
-            odds: placeDiv,
-            estReturn: placeStake * placeDiv,
+            odds: fixedPlaceOdds,
+            estReturn: placeStake * fixedPlaceOdds,
+            isFixedOdds: isFixed,
+            fixedOdds: isFixed ? fixedPlaceOdds : null,
             timestamp: timestampStr,
             status: 'active'
         });
@@ -4300,6 +4389,20 @@ async function confirmAndPlaceBet() {
     renderBettingTab();
     renderTransactionHistory();
     showNotification(`Successfully placed ${betsPlacedCount} bet(s) on ${dogName} for a total of $${totalStakeNeeded.toFixed(2)}!`, "success");
+}
+
+function closePlaceBetModal() {
+    let modal = document.getElementById('place-bet-modal');
+    let modalContent = document.getElementById('place-bet-modal-content');
+    
+    if (modal && modalContent) {
+        modal.classList.add('opacity-0');
+        modalContent.classList.add('scale-95');
+        
+        setTimeout(() => {
+            modal.classList.add('hidden');
+        }, 300); // Matches the 300ms transition duration
+    }
 }
 
 function updateWalletDisplay() {
@@ -4497,33 +4600,46 @@ function renderBettingTab() {
         } else {
             let sortedActive = [...filteredActive].sort(sortBetsComparator);
             let html = '';
-            sortedActive.forEach((bet) => {
-                let originalActiveIdx = window.activeBets.indexOf(bet);
-                html += `
-                    <div class="bg-slate-50 dark:bg-slate-800 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-3">
-                        <div>
-                            <div class="font-black text-slate-900 dark:text-white text-sm">${bet.dogName || "Unknown"} <span class="font-normal font-mono text-slate-500">(${bet.betType || "Win"})</span></div>
-                            <div class="text-[11px] text-slate-500 mt-0.5">${bet.trackName || ""} • Staked: <strong class="text-slate-800 dark:text-slate-200">$${(bet.stake || 0).toFixed(2)}</strong></div>
-                        </div>
-                        <div class="flex items-center gap-3 flex-wrap w-full sm:w-auto justify-between sm:justify-end">
-                            <div class="flex items-center gap-1.5">
-                                <label class="text-[10px] font-bold text-slate-500 uppercase">Odds:</label>
-                                <input type="number" step="0.1" value="${bet.odds || 0}" onchange="updateActiveBetOdds(${originalActiveIdx}, this.value)" class="w-20 text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none"/>
-                            </div>
-                            <div class="text-right">
-                                <span class="block text-[10px] text-slate-400 uppercase font-bold">Est. Return</span>
-                                <span class="font-mono font-bold text-green-600 dark:text-green-400">$${(bet.estReturn || 0).toFixed(2)}</span>
-                            </div>
-                            <button onclick="cancelActiveBet(${originalActiveIdx})" class="text-xs text-red-600 hover:text-red-800 font-bold px-2 py-1 rounded border border-red-200 hover:bg-red-50 transition-colors">Cancel</button>
-                        </div>
-                    </div>
-                `;
-            });
+			sortedActive.forEach((bet) => {
+				let originalActiveIdx = window.activeBets.indexOf(bet);
+				let stake = bet.stake || 0;
+				let odds = bet.odds || 0;
+				let estReturn = bet.estReturn || (stake * odds);
+				
+				// Check if fixed odds badge should show
+				let fixedBadge = bet.isFixedOdds ? `<span class="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50/80 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 border border-amber-100 dark:border-amber-900/30">Fixed</span>` : '';
+
+				html += `
+				<div class="bg-slate-50 dark:bg-slate-800 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-3">
+					<div>
+						<div class="flex items-center gap-2 flex-wrap">
+							<span class="font-black text-slate-900 dark:text-white text-sm">${bet.dogName || "Unknown"} (${bet.betType || "Win"})</span>
+							<span class="px-2 py-0.5 rounded text-[10px] font-bold border ${badgeClass}">${isWin ? 'Won' : 'Lost'}</span>
+						</div>
+						<!-- UPDATED LINE: Stake and Odds values are now wrapped in <strong> tags -->
+						<div class="text-[11px] text-slate-500 mt-0.5">${bet.trackName || ""} • Stake: <strong class="text-slate-800 dark:text-slate-200 font-mono">$${stake.toFixed(2)}</strong> • Odds: <strong class="text-slate-800 dark:text-slate-200 font-mono">${(bet.odds || 0).toFixed(2)}</strong>${fixedBadge}</div>
+					</div>
+					<div class="flex items-center gap-3 flex-wrap w-full sm:w-auto justify-between sm:justify-end">
+						<div class="flex items-center gap-1.5">
+							<label class="text-[10px] font-bold text-slate-500 uppercase">Payout ($):</label>
+							<input type="number" step="0.1" value="${payout.toFixed(2)}" onchange="updateSettledBetPayout(${originalSettledIdx}, this.value)" class="w-24 text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none" title="Manually override total payout amount"/>
+						</div>
+						<div class="text-right">
+							<span class="block text-[10px] text-slate-400 uppercase font-bold">Profit / Loss</span>
+							<span class="font-mono font-bold ${profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}">
+								${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}
+							</span>
+						</div>
+						<button onclick="deleteSettledBet(${originalSettledIdx})" class="text-xs text-red-600 hover:text-red-800 font-bold px-2 py-1 rounded border border-red-200 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors" title="Delete Settled Bet">🗑️</button>
+					</div>
+				</div>
+			`;
+			});
             activeContainer.innerHTML = html;
         }
     }
 
-    let filteredSettled = (window.settledBets || []).filter(bet => {
+let filteredSettled = (window.settledBets || []).filter(bet => {
         if (!bet) return false;
         if (!selectedTrack && !selectedDate) return true;
 
@@ -4550,6 +4666,9 @@ function renderBettingTab() {
                 let isWin = profit > 0;
                 let badgeClass = isWin ? 'bg-green-100 text-green-800 dark:bg-green-950/60 dark:text-green-300 border-green-300' : 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300 border-red-300';
                 
+                // Fixed odds badge check
+                let fixedBadge = bet.isFixedOdds ? `<span class="ml-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300">Fixed</span>` : '';
+                
                 html += `
                     <div class="bg-slate-50 dark:bg-slate-800 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-3">
                         <div>
@@ -4557,7 +4676,8 @@ function renderBettingTab() {
                                 <span class="font-black text-slate-900 dark:text-white text-sm">${bet.dogName || "Unknown"} (${bet.betType || "Win"})</span>
                                 <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${badgeClass}">${isWin ? 'Won' : 'Lost'}</span>
                             </div>
-                            <div class="text-[11px] text-slate-500 mt-0.5">${bet.trackName || ""} • Stake: $${stake.toFixed(2)}</div>
+                            <!-- BOLD STAKE AND BOLD ODDS WITH FIXED BADGE -->
+                            <div class="text-[11px] text-slate-500 mt-0.5">${bet.trackName || ""} • Stake: <strong class="text-slate-800 dark:text-slate-200 font-mono">$${stake.toFixed(2)}</strong> • Odds: <strong class="text-slate-800 dark:text-slate-200 font-mono">${(bet.odds || 0).toFixed(2)}</strong>${fixedBadge}</div>
                         </div>
                         <div class="flex items-center gap-3 flex-wrap w-full sm:w-auto justify-between sm:justify-end">
                             <div class="flex items-center gap-1.5">
@@ -4722,4 +4842,45 @@ async function deleteSettledBet(index) {
         renderBettingTab();
         showNotification("Settled bet deleted.", "info");
     }
+}
+
+// 1. Toggle visibility of fixed odds input fields when switch is clicked
+const fixedOddsToggle = document.getElementById('fixedOddsToggle');
+const fixedOddsInputsContainer = document.getElementById('fixedOddsInputsContainer');
+
+if (fixedOddsToggle && fixedOddsInputsContainer) {
+  fixedOddsToggle.addEventListener('change', (e) => {
+    if (e.target.checked) {
+      fixedOddsInputsContainer.classList.remove('hidden');
+    } else {
+      fixedOddsInputsContainer.classList.add('hidden');
+    }
+  });
+}
+
+// 2. Include these fields when collecting form data to save to Firestore / database
+function collectBetFormData() {
+  const isFixed = document.getElementById('fixedOddsToggle')?.checked || false;
+  
+  return {
+    winStake: parseFloat(document.getElementById('winStakeInput')?.value) || 0,
+    placeStake: parseFloat(document.getElementById('placeStakeInput')?.value) || 0,
+    isFixedOdds: isFixed,
+    fixedWinOdds: isFixed ? parseFloat(document.getElementById('fixedWinOddsInput')?.value) || 0 : null,
+    fixedPlaceOdds: isFixed ? parseFloat(document.getElementById('fixedPlaceOddsInput')?.value) || 0 : null
+  };
+}
+
+// 3. Prevent incoming race syncs/imports from overwriting your custom fixed odds
+function applySyncOrImportOddsUpdate(existingBet, incomingRaceData) {
+  if (existingBet.isFixedOdds) {
+    // Keeps your manual fixed odds intact during syncs/settlement checks
+    existingBet.winOdds = existingBet.fixedWinOdds;
+    existingBet.placeOdds = existingBet.fixedPlaceOdds;
+    return; 
+  }
+  
+  // Standard sync fallback if fixed odds is toggled off
+  existingBet.winOdds = incomingRaceData.currentWinOdds;
+  existingBet.placeOdds = incomingRaceData.currentPlaceOdds;
 }
