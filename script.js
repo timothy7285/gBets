@@ -669,6 +669,11 @@ async function sortAndPersistMeetingsObject() {
     });
     window.allRaceMeetings = sortedMeetings;
 
+    // Ensure wallet and bet arrays always have valid defaults so they never wipe out to undefined
+    window.userWallet = window.userWallet || { balance: 0.00, staked: 0.00, profit: 0.00, transactions: [] };
+    window.activeBets = Array.isArray(window.activeBets) ? window.activeBets : [];
+    window.settledBets = Array.isArray(window.settledBets) ? window.settledBets : [];
+
     const snapshotPayload = {
         meetings: window.allRaceMeetings,
         activeKey: window.activeRaceKey,
@@ -948,11 +953,11 @@ function parseTxtData(lines, filename) {
     let trackName = "";
     let raceDate = "";
     
-    let actualWinner = null;
-    let actualPlace1 = null;
-    let actualPlace2 = null;
-    let actualPlace3 = null;
-    let actualPlace4 = null;
+    let parsedActualWinner = null;
+    let parsedActualPlace1 = null;
+    let parsedActualPlace2 = null;
+    let parsedActualPlace3 = null;
+    let parsedActualPlace4 = null;
 
     let startersColMap = {};
 
@@ -1058,65 +1063,106 @@ function parseTxtData(lines, filename) {
                 placing: placingVal
             });
 
+            // Explicitly map placing numbers to podium positions
             if (placingVal === 1) {
-                actualWinner = cleanDogName;
-                actualPlace1 = cleanDogName;
+                parsedActualWinner = cleanDogName;
+                parsedActualPlace1 = cleanDogName;
             } else if (placingVal === 2) {
-                actualPlace2 = cleanDogName;
+                parsedActualPlace2 = cleanDogName;
             } else if (placingVal === 3) {
-                actualPlace3 = cleanDogName;
+                parsedActualPlace3 = cleanDogName;
             } else if (placingVal === 4) {
-                actualPlace4 = cleanDogName;
+                parsedActualPlace4 = cleanDogName;
             }
         }
     }
 
-		if (!raceDistance) {
-				let text = lines.join('\n');
-				const match = text.match(/\b(\d{3,4}m)\b/i);
-				if (match) {
-					raceDistance = match[1];
-				}
-			}
+    if (!raceDistance) {
+        let text = lines.join('\n');
+        const match = text.match(/\b(\d{3,4}m)\b/i);
+        if (match) {
+            raceDistance = match[1];
+        }
+    }
 
-			if (!raceDate && fallbackDate) {
-				raceDate = fallbackDate;
-			}
+    if (!raceDate && fallbackDate) {
+        raceDate = fallbackDate;
+    }
 
-			let cleanDateKey = raceDate ? raceDate.replace(/\D/g, "") : "NODATE";
-			if (cleanDateKey.length === 8) {
-				cleanDateKey = `${cleanDateKey.slice(0,2)}.${cleanDateKey.slice(2,4)}.${cleanDateKey.slice(4,8)}`;
-			}
+    let cleanDateKey = raceDate ? raceDate.replace(/\D/g, "") : "NODATE";
+    if (cleanDateKey.length === 8) {
+        cleanDateKey = `${cleanDateKey.slice(0,2)}.${cleanDateKey.slice(2,4)}.${cleanDateKey.slice(4,8)}`;
+    }
 
-			// Declared only ONCE here using a unique variable name if needed, or reusing the declaration
-			let uniqueMeetingKey = trackName && raceNumber ? `${trackName.trim().toUpperCase()} - Race ${raceNumber} (${cleanDateKey})` : filename;
-			
-			window.allRaceMeetings[uniqueMeetingKey] = {
-				trackName: trackName || "UNKNOWN",
-				raceNumber: raceNumber || "1",
-				raceDistance: raceDistance || "",
-				raceDate: raceDate || fallbackDate || "",
-				starters: starters,
-				actualWinner: actualWinner,
-				actualPlace1: actualPlace1,
-				actualPlace2: actualPlace2,
-				actualPlace3: actualPlace3,
-				actualPlace4: actualPlace4
-			};
+    let uniqueMeetingKey = trackName && raceNumber ? `${trackName.trim().toUpperCase()} - Race ${raceNumber} (${cleanDateKey})` : filename;
+    let existingMeeting = window.allRaceMeetings[uniqueMeetingKey];
 
-			if (!window.activeRaceKey) {
-				window.activeRaceKey = uniqueMeetingKey;
-			}
-		}
+    let incomingHasResults = (parsedActualWinner && parsedActualWinner.trim() !== "") || starters.some(s => s.placing === 1);
+
+    let finalWinner = parsedActualWinner;
+    let finalPlace1 = parsedActualPlace1;
+    let finalPlace2 = parsedActualPlace2;
+    let finalPlace3 = parsedActualPlace3;
+    let finalPlace4 = parsedActualPlace4;
+
+    // If incoming file has NO results, preserve existing meeting data if it had results
+    if (!incomingHasResults && existingMeeting && ((existingMeeting.actualWinner && existingMeeting.actualWinner.trim() !== "") || existingMeeting.starters.some(s => s.placing === 1))) {
+        finalWinner = existingMeeting.actualWinner;
+        finalPlace1 = existingMeeting.actualPlace1;
+        finalPlace2 = existingMeeting.actualPlace2;
+        finalPlace3 = existingMeeting.actualPlace3;
+        finalPlace4 = existingMeeting.actualPlace4;
+        
+        starters.forEach(newStarter => {
+            let oldStarter = existingMeeting.starters.find(s => s.starterName.toUpperCase() === newStarter.starterName.toUpperCase());
+            if (oldStarter && oldStarter.placing > 0) {
+                newStarter.placing = oldStarter.placing;
+            }
+        });
+    }
+
+    window.allRaceMeetings[uniqueMeetingKey] = {
+        trackName: trackName || (existingMeeting ? existingMeeting.trackName : "UNKNOWN"),
+        raceNumber: raceNumber || (existingMeeting ? existingMeeting.raceNumber : "1"),
+        raceDistance: raceDistance || (existingMeeting ? existingMeeting.raceDistance : ""),
+        raceDate: raceDate || fallbackDate || (existingMeeting ? existingMeeting.raceDate : ""),
+        starters: starters,
+        actualWinner: finalWinner,
+        actualPlace1: finalPlace1,
+        actualPlace2: finalPlace2,
+        actualPlace3: finalPlace3,
+        actualPlace4: finalPlace4
+    };
+
+    if (!window.activeRaceKey) {
+        window.activeRaceKey = uniqueMeetingKey;
+    }
+
+    // Automatically check settlement for active/saved items whenever a meeting updates
+    checkAutoFillPostRaceResults();
+}
 
 async function checkAutoFillPostRaceResults() {
     let updated = false;
 
-	window.savedPredictions.forEach(savedItem => {
+    window.activeBets = Array.isArray(window.activeBets) ? window.activeBets : [];
+    window.settledBets = Array.isArray(window.settledBets) ? window.settledBets : [];
+
+    // --- 1. SAVED PREDICTIONS SYNC ---
+    window.savedPredictions.forEach(savedItem => {
         let matchingMeeting = Object.values(window.allRaceMeetings).find(m => {
+            if (!m.starters || !Array.isArray(m.starters)) return false;
+            
+            let hasValidPlacings = (m.actualWinner && m.actualWinner.trim() !== "") || m.starters.some(s => Number(s.placing) === 1);
+            if (!hasValidPlacings) return false;
+
             let savedTrack = extractTrackNameFromSaved(savedItem).toUpperCase().trim();
             let meetingTrack = (m.trackName || "").toUpperCase().trim();
-            let trackMatch = savedTrack === meetingTrack || savedTrack.includes(meetingTrack) || meetingTrack.includes(savedTrack);
+            let cleanSavedTrack = savedTrack.replace(/RACE\s*\d+/gi, "").trim();
+            
+            if (!cleanSavedTrack || !meetingTrack) return false;
+            let trackMatch = cleanSavedTrack === meetingTrack || cleanSavedTrack.includes(meetingTrack) || meetingTrack.includes(cleanSavedTrack);
+            if (!trackMatch) return false;
 
             let savedRaceNum = String(savedItem.raceNumber || "").trim();
             let meetingRaceNum = String(m.raceNumber || "").trim();
@@ -1125,6 +1171,7 @@ async function checkAutoFillPostRaceResults() {
                 if (match) savedRaceNum = match[1];
             }
             let raceNumMatch = savedRaceNum && meetingRaceNum && savedRaceNum === meetingRaceNum;
+            if (!raceNumMatch) return false;
 
             let savedDateClean = String(savedItem.raceDate || extractDateFromSaved(savedItem) || "").replace(/\D/g, "");
             if (!savedDateClean) {
@@ -1133,67 +1180,116 @@ async function checkAutoFillPostRaceResults() {
             }
             let meetingDateClean = String(m.raceDate || "").replace(/\D/g, "");
 
-            let dateMatch = true;
             if (savedDateClean && meetingDateClean) {
-                dateMatch = savedDateClean === meetingDateClean;
+                return savedDateClean === meetingDateClean;
             }
 
-            return trackMatch && raceNumMatch && dateMatch && m.actualWinner;
+            return true;
         });
 
         if (matchingMeeting) {
-            if (matchingMeeting.actualWinner && matchingMeeting.actualWinner !== "") {
-                savedItem.actualWinner = matchingMeeting.actualWinner;
-                savedItem.actualPlace1 = matchingMeeting.actualPlace1;
-                savedItem.actualPlace2 = matchingMeeting.actualPlace2;
-                savedItem.actualPlace3 = matchingMeeting.actualPlace3;
-                savedItem.actualPlace4 = matchingMeeting.actualPlace4;
-                
-                let winningStarter = matchingMeeting.starters.find(s => s.starterName.toUpperCase() === matchingMeeting.actualWinner.toUpperCase() || s.placing === 1);
-                let officialWinDiv = winningStarter && winningStarter.winDiv > 0 ? winningStarter.winDiv : 0;
+            savedItem.actualWinner = matchingMeeting.actualWinner;
+            savedItem.actualPlace1 = matchingMeeting.actualPlace1;
+            savedItem.actualPlace2 = matchingMeeting.actualPlace2;
+            savedItem.actualPlace3 = matchingMeeting.actualPlace3;
+            savedItem.actualPlace4 = matchingMeeting.actualPlace4;
+            
+            let winningStarter = matchingMeeting.starters.find(s => s.starterName.toUpperCase() === matchingMeeting.actualWinner.toUpperCase() || s.placing === 1);
+            let officialWinDiv = winningStarter && winningStarter.winDiv > 0 ? winningStarter.winDiv : 0;
 
-                let scoredDogsList = savedItem.scoredDogs || [];
-                let topPick = scoredDogsList.length > 0 ? scoredDogsList[0] : null;
-                let activeCompetitorsCount = scoredDogsList.length;
-                let payoutTier = savedItem.manualPayoutTier || (activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only"));
-                
-                if (topPick) {
-                    let topPickName = topPick.name || "";
-                    if (matchingMeeting.actualWinner.toUpperCase() === topPickName.toUpperCase()) {
-                        savedItem.actualWinPayout = officialWinDiv > 0 ? officialWinDiv : (topPick.winDiv > 0 ? topPick.winDiv : 2.0);
-                    } else {
-                        savedItem.actualWinPayout = 0;
-                    }
-
-                    let podium = [matchingMeeting.actualPlace1, matchingMeeting.actualPlace2, matchingMeeting.actualPlace3].map(n => (n || "").toUpperCase());
-                    let eligiblePlaceHit = false;
-                    if (payoutTier === "1,2,3") {
-                        eligiblePlaceHit = podium.slice(0, 3).includes(topPickName.toUpperCase());
-                    } else if (payoutTier === "2") {
-                        eligiblePlaceHit = podium.slice(0, 2).includes(topPickName.toUpperCase());
-                    }
-
-                    if (eligiblePlaceHit) {
-                        let topPickStarter = matchingMeeting.starters.find(s => s.starterName.toUpperCase() === topPickName.toUpperCase());
-                        let officialPlaceDiv = topPickStarter && topPickStarter.placeDiv > 0 ? topPickStarter.placeDiv : (topPick.placeDiv > 0 ? topPick.placeDiv : 1.2);
-                        savedItem.actualPlacePayout = officialPlaceDiv;
-                    } else {
-                        savedItem.actualPlacePayout = 0;
-                    }
+            let scoredDogsList = savedItem.scoredDogs || [];
+            let topPick = scoredDogsList.length > 0 ? scoredDogsList[0] : null;
+            let activeCompetitorsCount = scoredDogsList.length;
+            let payoutTier = savedItem.manualPayoutTier || (activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only"));
+            
+            if (topPick) {
+                let topPickName = topPick.name || "";
+                if (matchingMeeting.actualWinner.toUpperCase() === topPickName.toUpperCase()) {
+                    savedItem.actualWinPayout = officialWinDiv > 0 ? officialWinDiv : (topPick.winDiv > 0 ? topPick.winDiv : 2.0);
+                } else {
+                    savedItem.actualWinPayout = 0;
                 }
-                updated = true;
+
+                let podium = [matchingMeeting.actualPlace1, matchingMeeting.actualPlace2, matchingMeeting.actualPlace3].map(n => (n || "").toUpperCase());
+                let eligiblePlaceHit = false;
+                if (payoutTier === "1,2,3") {
+                    eligiblePlaceHit = podium.slice(0, 3).includes(topPickName.toUpperCase());
+                } else if (payoutTier === "2") {
+                    eligiblePlaceHit = podium.slice(0, 2).includes(topPickName.toUpperCase());
+                }
+
+                if (eligiblePlaceHit) {
+                    let topPickStarter = matchingMeeting.starters.find(s => s.starterName.toUpperCase() === topPickName.toUpperCase());
+                    let officialPlaceDiv = topPickStarter && topPickStarter.placeDiv > 0 ? topPickStarter.placeDiv : (topPick.placeDiv > 0 ? topPick.placeDiv : 1.2);
+                    savedItem.actualPlacePayout = officialPlaceDiv;
+                } else {
+                    savedItem.actualPlacePayout = 0;
+                }
             }
+            updated = true;
         }
     });
 
+    // --- 2. ACTIVE BETS SETTLEMENT (ROBUST SYNC & DATE MATCHING) ---
+    let remainingActiveBets = [];
+
     window.activeBets.forEach(bet => {
         let matchingMeeting = Object.values(window.allRaceMeetings).find(m => {
-            let trackMatch = m.trackName.toUpperCase().includes(bet.trackName.toUpperCase()) || bet.trackName.toUpperCase().includes(m.trackName.toUpperCase());
-            let raceNumMatch = String(m.raceNumber) === String(bet.raceNum);
-            return trackMatch && raceNumMatch && m.actualWinner;
+            if (!m.starters || !Array.isArray(m.starters)) return false;
+
+            let meetingTrack = (m.trackName || "").toUpperCase().trim();
+            let betTrack = (bet.trackName || "").toUpperCase().trim();
+            let cleanBetTrack = betTrack.replace(/RACE\s*\d+/gi, "").replace(/\(.*?\)/g, "").trim();
+            let cleanMeetingTrack = meetingTrack.replace(/\(.*?\)/g, "").trim();
+            
+            if (!cleanBetTrack || !cleanMeetingTrack) return false;
+
+            let trackMatch = cleanBetTrack === cleanMeetingTrack || cleanBetTrack.includes(cleanMeetingTrack) || cleanMeetingTrack.includes(cleanBetTrack);
+            if (!trackMatch) return false;
+
+            let meetingRaceNum = String(m.raceNumber || "").trim();
+            let betRaceNum = String(bet.raceNum || "").trim();
+            if (!betRaceNum || betRaceNum === "N/A") {
+                let match = bet.trackName.match(/RACE\s*(\d+)/i);
+                if (match) betRaceNum = match[1];
+            }
+            let raceNumMatch = meetingRaceNum && betRaceNum && meetingRaceNum === betRaceNum;
+            if (!raceNumMatch) return false;
+
+            // Robust Date Extraction from Bet and Meeting
+            let betDateClean = String(bet.raceDate || "").replace(/\D/g, "");
+            if (!betDateClean) {
+                let match = bet.trackName.match(/(\d{2}[./-]\d{2}[./-]\d{4}|\d{8})/);
+                if (match) betDateClean = match[1].replace(/\D/g, "");
+            }
+            
+            let meetingDateClean = String(m.raceDate || "").replace(/\D/g, "");
+            if (!meetingDateClean) {
+                let match = (m.trackName || "").match(/(\d{2}[./-]\d{2}[./-]\d{4}|\d{8})/);
+                if (match) meetingDateClean = match[1].replace(/\D/g, "");
+            }
+
+            // If both dates exist, they must match. If either is missing, allow the match based on track/race number.
+            if (betDateClean && meetingDateClean) {
+                return betDateClean === meetingDateClean;
+            }
+
+            return true;
         });
 
-        if (matchingMeeting) {
+        // ABSOLUTE GUARD FOR MISSING RACE .TXT FILE:
+        if (!matchingMeeting) {
+            remainingActiveBets.push(bet);
+            return; 
+        }
+
+        // Check if this specific meeting has valid official results
+        let hasValidOfficialResults = matchingMeeting.starters && 
+                                       matchingMeeting.starters.length > 0 &&
+                                       ((matchingMeeting.actualWinner && matchingMeeting.actualWinner.trim() !== "") || 
+                                        matchingMeeting.starters.some(s => Number(s.placing) === 1));
+
+        if (hasValidOfficialResults) {
             let won = false;
             let payout = 0;
 
@@ -1242,12 +1338,12 @@ async function checkAutoFillPostRaceResults() {
             window.settledBets.unshift(bet);
             window.userWallet.balance += bet.payout;
             updated = true;
+        } else {
+            remainingActiveBets.push(bet);
         }
     });
 
-    if (window.activeBets.length > 0) {
-        window.activeBets = window.activeBets.filter(b => b.status !== 'settled');
-    }
+    window.activeBets = remainingActiveBets;
 
     if (updated) {
         await sortAndPersistMeetingsObject();
@@ -1264,7 +1360,7 @@ async function syncResultsWithSavedHistory() {
     renderSavedPredictions();
     renderBettingTab();
     updateAllUIComponents();
-    showNotification("Saved history synchronized with race results successfully!", "success");
+    showNotification("Saved history and active bets synchronized successfully!", "success");
 }
 
 function getRacePillStatus(key) {
