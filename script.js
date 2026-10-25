@@ -121,37 +121,33 @@ window.addEventListener('DOMContentLoaded', async () => {
                     if (parsed.settledBets) storedSettledBets = parsed.settledBets;
                     loadedFromFirebase = true;
                     setLiveStatusSymbol('connected');
-                    document.getElementById('live-file-status').innerText = "Connected & Cloud-Syncing with Firebase Firestore";
-                    document.getElementById('header-live-file-status').innerText = "Cloud: Firebase Active";
                 }
             }
         } catch (fbErr) {
             console.warn("Firebase load failed:", fbErr);
         }
 
-        if (!loadedFromFirebase) {
+        if (!loadedFromFirebase && db) {
             try {
-                if (db) {
-                    const getVal = async (k) => {
-                        let row = await db.sessions.get(k);
-                        return row ? row.value : null;
-                    };
-                    storedMeetings = await getVal('gbet_session_meetings');
-                    storedActiveKey = await getVal('gbet_session_active_key');
-                    storedStats = await getVal('gbet_session_stats');
-                    storedCache = await getVal('gbet_computed_cache');
-                    storedSavedPredictions = await getVal('gbet_session_saved_predictions');
-                    storedCustomPresets = await getVal('gbet_session_custom_presets');
-                    storedWallet = await getVal('gbet_session_wallet');
-                    storedActiveBets = await getVal('gbet_session_active_bets');
-                    storedSettledBets = await getVal('gbet_session_settled_bets');
-                    storedHandle = await getVal('gbet_live_file_handle');
-                }
+                const getVal = async (k) => {
+                    let row = await db.sessions.get(k);
+                    return row ? row.value : null;
+                };
+                storedMeetings = await getVal('gbet_session_meetings');
+                storedActiveKey = await getVal('gbet_session_active_key');
+                storedStats = await getVal('gbet_session_stats');
+                storedCache = await getVal('gbet_computed_cache');
+                storedSavedPredictions = await getVal('gbet_session_saved_predictions');
+                storedCustomPresets = await getVal('gbet_session_custom_presets');
+                storedWallet = await getVal('gbet_session_wallet');
+                storedActiveBets = await getVal('gbet_session_active_bets');
+                storedSettledBets = await getVal('gbet_session_settled_bets');
             } catch (err) {
                 window.isIndexedDBAvailable = false;
             }
         }
 
+        // Assign to global state safely
         if (storedMeetings) window.allRaceMeetings = storedMeetings;
         if (storedStats) window.dogStats = storedStats;
         if (storedCache) window.computedPredictionsCache = storedCache;
@@ -161,85 +157,29 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (storedActiveBets) window.activeBets = storedActiveBets;
         if (storedSettledBets) window.settledBets = storedSettledBets;
 
-		if (window.dogStats && window.dogStats.length > 0) {
-					window.dogStats.forEach(stat => {
-						if (!stat.sourceFile || stat.sourceFile.trim() === "") {
-							stat.sourceFile = stat.track ? `${stat.track}_Imports.csv` : "Manual_Or_Legacy_Stats.csv";
-						}
-					});
-				}
+    } catch (bootErr) {
+        console.error("Boot storage read error (falling back to empty state):", bootErr);
+    }
 
+    // --- ALWAYS ENSURE UI RENDERS REGARDLESS OF STORAGE ERRORS ---
+    try {
         populatePresetSettingsUI();
         renderBettingTab();
-
-        if (storedHandle && !loadedFromFirebase) {
-            window.cachedFileHandleReference = storedHandle;
-            try {
-                const permStatus = await storedHandle.queryPermission({ mode: 'readwrite' });
-                if (permStatus === 'granted') {
-                    window.liveFileHandle = storedHandle;
-                    let fileData = await storedHandle.getFile();
-                    let textContent = await fileData.text();
-                    let parsed = JSON.parse(textContent);
-
-                    if (parsed.meetings) window.allRaceMeetings = parsed.meetings;
-                    if (parsed.stats) window.dogStats = parsed.stats;
-                    if (parsed.cache) window.computedPredictionsCache = parsed.cache;
-                    if (parsed.savedPredictions) window.savedPredictions = parsed.savedPredictions;
-                    if (parsed.customPresets) window.customPresets = parsed.customPresets;
-                    if (parsed.userWallet) window.userWallet = parsed.userWallet;
-                    if (parsed.activeBets) window.activeBets = parsed.activeBets;
-                    if (parsed.settledBets) window.settledBets = parsed.settledBets;
-                    if (parsed.activeKey && window.allRaceMeetings[parsed.activeKey]) {
-                        window.activeRaceKey = parsed.activeKey;
-                    }
-                    populatePresetSettingsUI();
-                    renderBettingTab();
-					populateSavedFilterDropdowns();
-					renderSavedPredictions();
-
-                    document.getElementById('live-file-status').innerText = `Auto-Connected & Live-Syncing: ${fileData.name}`;
-                    document.getElementById('header-live-file-status').innerText = `Live: ${fileData.name}`;
-                    setLiveStatusSymbol('connected');
-                } else if (permStatus === 'prompt') {
-                    document.getElementById('live-file-status').innerText = "Saved master file found. Click Reconnect to resume live-syncing.";
-                    document.getElementById('header-live-file-status').innerText = "Reconnect Required";
-                    setLiveStatusSymbol('prompt');
-                    showReconnectButtonUI();
-                }
-            } catch (err) {
-                if (!loadedFromFirebase) setLiveStatusSymbol('disconnected');
-            }
-        } else if (!loadedFromFirebase) {
-            setLiveStatusSymbol('disconnected');
-        }
+        populateSavedFilterDropdowns();
+        renderSavedPredictions();
         
-        await sortAndPersistMeetingsObject();
-
-        if (storedActiveKey && window.allRaceMeetings[storedActiveKey]) {
-            window.activeRaceKey = storedActiveKey;
-        } else {
-            let keys = getSortedRaceKeys();
-            if (keys.length > 0) window.activeRaceKey = keys[0];
-        }
-
-        if (Object.keys(window.allRaceMeetings).length > 0) {
+        let keys = getSortedRaceKeys();
+        if (keys.length > 0) {
+            if (!window.activeRaceKey || !window.allRaceMeetings[window.activeRaceKey]) {
+                window.activeRaceKey = keys[0];
+            }
             updateAllUIComponents();
             if (window.dogStats.length > 0) {
                 renderStatsTable();
-                document.getElementById('csvFileLabel').innerText = `${window.dogStats.length} stats records loaded`;
-            }
-            document.getElementById('txtFileLabel').innerText = `${Object.keys(window.allRaceMeetings).length} file(s) loaded`;
-            
-            if (window.dogStats.length > 0 && window.activeRaceKey) {
-                refreshPredictions(false);
             }
         }
-
-        runDiagnosticsInspector();
-     
-    } catch (err) {
-        console.error("Critical boot error:", err);
+    } catch (uiErr) {
+        console.error("UI post-boot render error:", uiErr);
     }
 });
 
@@ -4542,6 +4482,9 @@ function renderBettingTab() {
     updateWalletDisplay();
     populateUserBetFilterDropdowns();
 
+    // DECLARE A SAFE GLOBAL DEFAULT HERE SO IT CAN NEVER BE UNDEFINED
+    let badgeClass = 'bg-slate-100 text-slate-800 border-slate-300'; 
+
     let trackSelectEl = document.getElementById('filter-user-track-select');
     let dateSelectEl = document.getElementById('filter-user-date-select');
     
@@ -4581,7 +4524,7 @@ function renderBettingTab() {
         return raceB - raceA;
     };
 
-    let filteredActive = (window.activeBets || []).filter(bet => {
+	let filteredActive = (window.activeBets || []).filter(bet => {
         if (!bet) return false;
         if (!selectedTrack && !selectedDate) return true;
 
@@ -4600,41 +4543,34 @@ function renderBettingTab() {
         } else {
             let sortedActive = [...filteredActive].sort(sortBetsComparator);
             let html = '';
-			sortedActive.forEach((bet) => {
-				let originalActiveIdx = window.activeBets.indexOf(bet);
-				let stake = bet.stake || 0;
-				let odds = bet.odds || 0;
-				let estReturn = bet.estReturn || (stake * odds);
-				
-				// Check if fixed odds badge should show
-				let fixedBadge = bet.isFixedOdds ? `<span class="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50/80 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 border border-amber-100 dark:border-amber-900/30">Fixed</span>` : '';
+            sortedActive.forEach((bet) => {
+                let originalActiveIdx = window.activeBets.indexOf(bet);
+                let stake = bet.stake || 0;
+                let odds = bet.odds || 0;
+                let estReturn = bet.estReturn || (stake * odds);
+                
+                // Fixed odds badge check
+                let fixedBadge = bet.isFixedOdds ? `<span class="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50/80 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 border border-amber-100 dark:border-amber-900/30">Fixed</span>` : '';
 
-				html += `
-				<div class="bg-slate-50 dark:bg-slate-800 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-3">
-					<div>
-						<div class="flex items-center gap-2 flex-wrap">
-							<span class="font-black text-slate-900 dark:text-white text-sm">${bet.dogName || "Unknown"} (${bet.betType || "Win"})</span>
-							<span class="px-2 py-0.5 rounded text-[10px] font-bold border ${badgeClass}">${isWin ? 'Won' : 'Lost'}</span>
-						</div>
-						<!-- UPDATED LINE: Stake and Odds values are now wrapped in <strong> tags -->
-						<div class="text-[11px] text-slate-500 mt-0.5">${bet.trackName || ""} • Stake: <strong class="text-slate-800 dark:text-slate-200 font-mono">$${stake.toFixed(2)}</strong> • Odds: <strong class="text-slate-800 dark:text-slate-200 font-mono">${(bet.odds || 0).toFixed(2)}</strong>${fixedBadge}</div>
-					</div>
-					<div class="flex items-center gap-3 flex-wrap w-full sm:w-auto justify-between sm:justify-end">
-						<div class="flex items-center gap-1.5">
-							<label class="text-[10px] font-bold text-slate-500 uppercase">Payout ($):</label>
-							<input type="number" step="0.1" value="${payout.toFixed(2)}" onchange="updateSettledBetPayout(${originalSettledIdx}, this.value)" class="w-24 text-xs px-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none" title="Manually override total payout amount"/>
-						</div>
-						<div class="text-right">
-							<span class="block text-[10px] text-slate-400 uppercase font-bold">Profit / Loss</span>
-							<span class="font-mono font-bold ${profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}">
-								${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}
-							</span>
-						</div>
-						<button onclick="deleteSettledBet(${originalSettledIdx})" class="text-xs text-red-600 hover:text-red-800 font-bold px-2 py-1 rounded border border-red-200 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors" title="Delete Settled Bet">🗑️</button>
-					</div>
-				</div>
-			`;
-			});
+                html += `
+                    <div class="bg-slate-50 dark:bg-slate-800 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-3">
+                        <div>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="font-black text-slate-900 dark:text-white text-sm">${bet.dogName || "Unknown"} (${bet.betType || "Win"})</span>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-300">Active</span>
+                            </div>
+                            <div class="text-[11px] text-slate-500 mt-0.5">${bet.trackName || ""} • Stake: <strong class="text-slate-800 dark:text-slate-200 font-mono">$${stake.toFixed(2)}</strong> • Odds: <strong class="text-slate-800 dark:text-slate-200 font-mono">${odds.toFixed(2)}</strong>${fixedBadge}</div>
+                        </div>
+                        <div class="flex items-center gap-4 flex-wrap w-full sm:w-auto justify-between sm:justify-end">
+                            <div class="text-right">
+                                <span class="block text-[10px] text-slate-400 uppercase font-bold">Est. Return</span>
+                                <span class="font-mono font-bold text-green-600 dark:text-green-400">$${estReturn.toFixed(2)}</span>
+                            </div>
+                            <button onclick="cancelActiveBet(${originalActiveIdx})" class="text-xs text-red-600 hover:text-red-800 font-bold px-2.5 py-1 rounded border border-red-200 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors">Cancel</button>
+                        </div>
+                    </div>
+                `;
+            });
             activeContainer.innerHTML = html;
         }
     }
@@ -4651,7 +4587,7 @@ let filteredSettled = (window.settledBets || []).filter(bet => {
         return trackMatch && dateMatch;
     });
 
-    const settledContainer = document.getElementById('settled-bets-container');
+const settledContainer = document.getElementById('settled-bets-container');
     if (settledContainer) {
         if (filteredSettled.length === 0) {
             settledContainer.innerHTML = `<p class="text-xs text-slate-400 italic">No settled bets match your selected filters.</p>`;
@@ -4660,15 +4596,16 @@ let filteredSettled = (window.settledBets || []).filter(bet => {
             let html = '';
             sortedSettled.forEach((bet) => {
                 let originalSettledIdx = window.settledBets.indexOf(bet);
+                
+                // Declare these variables first so they are fully scoped:
                 let stake = bet.stake || 0;
                 let payout = bet.payout || 0;
                 let profit = payout - stake;
                 let isWin = profit > 0;
+                
                 let badgeClass = isWin ? 'bg-green-100 text-green-800 dark:bg-green-950/60 dark:text-green-300 border-green-300' : 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300 border-red-300';
-                
-                // Fixed odds badge check
-                let fixedBadge = bet.isFixedOdds ? `<span class="ml-1 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300">Fixed</span>` : '';
-                
+                let fixedBadge = bet.isFixedOdds ? `<span class="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50/80 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 border border-amber-100 dark:border-amber-900/30">Fixed</span>` : '';
+
                 html += `
                     <div class="bg-slate-50 dark:bg-slate-800 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-3">
                         <div>
@@ -4676,7 +4613,6 @@ let filteredSettled = (window.settledBets || []).filter(bet => {
                                 <span class="font-black text-slate-900 dark:text-white text-sm">${bet.dogName || "Unknown"} (${bet.betType || "Win"})</span>
                                 <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${badgeClass}">${isWin ? 'Won' : 'Lost'}</span>
                             </div>
-                            <!-- BOLD STAKE AND BOLD ODDS WITH FIXED BADGE -->
                             <div class="text-[11px] text-slate-500 mt-0.5">${bet.trackName || ""} • Stake: <strong class="text-slate-800 dark:text-slate-200 font-mono">$${stake.toFixed(2)}</strong> • Odds: <strong class="text-slate-800 dark:text-slate-200 font-mono">${(bet.odds || 0).toFixed(2)}</strong>${fixedBadge}</div>
                         </div>
                         <div class="flex items-center gap-3 flex-wrap w-full sm:w-auto justify-between sm:justify-end">
