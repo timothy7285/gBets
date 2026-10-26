@@ -1398,9 +1398,15 @@ function updateRaceSelector() {
             deleteGroupBtn.className = "text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 mr-2 transition-colors flex-shrink-0 text-xs";
             deleteGroupBtn.title = `Delete all races for ${group.trackName} on ${group.raceDate}`;
             deleteGroupBtn.innerHTML = "🗑️";
-            deleteGroupBtn.onclick = async (e) => {
+            
+            // --- USE ADDITION EVENT LISTENER INSTEAD OF ONCLICK ---
+            deleteGroupBtn.dataset.trackName = group.trackName;
+            deleteGroupBtn.dataset.raceDate = group.raceDate;
+            deleteGroupBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                if (confirm(`Are you sure you want to delete all meetings for ${group.trackName} (${group.raceDate})?`)) {
+                let tName = e.currentTarget.dataset.trackName;
+                let rDate = e.currentTarget.dataset.raceDate;
+                if (confirm(`Are you sure you want to delete all meetings for ${tName} (${rDate})?`)) {
                     group.keys.forEach(k => {
                         delete window.allRaceMeetings[k];
                         if (window.computedPredictionsCache[k]) delete window.computedPredictionsCache[k];
@@ -1411,9 +1417,9 @@ function updateRaceSelector() {
                     }
                     await sortAndPersistMeetingsObject();
                     updateAllUIComponents();
-                    showNotification(`Successfully deleted all meetings for ${group.trackName} (${group.raceDate}).`, "success");
+                    showNotification(`Successfully deleted all meetings for ${tName} (${rDate}).`, "success");
                 }
-            };
+            });
 
             let headerBtn = document.createElement('button');
             headerBtn.className = "flex-grow flex flex-col items-start text-left focus:outline-none pl-0.5 overflow-hidden";
@@ -1434,20 +1440,25 @@ function updateRaceSelector() {
             contentDiv.id = safeGroupId;
             contentDiv.className = `pl-2 ml-2 border-l-2 border-slate-200 dark:border-slate-700 mt-2 gap-1.5 flex-col ${isExpanded ? 'flex' : 'hidden'}`;
 
-            headerBtn.onclick = function() {
-                let currentlyExpanded = window.expandedRibbonGroups.has(safeGroupId);
+            headerBtn.dataset.targetId = safeGroupId;
+            headerBtn.addEventListener('click', (e) => {
+                let targetId = e.currentTarget.dataset.targetId;
+                let targetContentDiv = document.getElementById(targetId);
+                let iconElem = document.getElementById(`${targetId}-icon`);
+                let currentlyExpanded = window.expandedRibbonGroups.has(targetId);
+                
                 if (currentlyExpanded) {
-                    window.expandedRibbonGroups.delete(safeGroupId);
-                    contentDiv.classList.remove('flex');
-                    contentDiv.classList.add('hidden');
-                    document.getElementById(`${safeGroupId}-icon`).classList.remove('rotate-180');
+                    window.expandedRibbonGroups.delete(targetId);
+                    targetContentDiv.classList.remove('flex');
+                    targetContentDiv.classList.add('hidden');
+                    iconElem.classList.remove('rotate-180');
                 } else {
-                    window.expandedRibbonGroups.add(safeGroupId);
-                    contentDiv.classList.remove('hidden');
-                    contentDiv.classList.add('flex');
-                    document.getElementById(`${safeGroupId}-icon`).classList.add('rotate-180');
+                    window.expandedRibbonGroups.add(targetId);
+                    targetContentDiv.classList.remove('hidden');
+                    targetContentDiv.classList.add('flex');
+                    iconElem.classList.add('rotate-180');
                 }
-            };
+            });
 
             groupContainer.appendChild(headerWrapper);
 
@@ -1482,20 +1493,23 @@ function updateRaceSelector() {
                 deleteRaceBtn.className = `flex-shrink-0 p-0.5 mr-2 rounded transition-colors text-xs ${isCurrent ? 'text-slate-300 hover:text-white dark:text-slate-600 dark:hover:text-slate-900' : 'text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400'}`;
                 deleteRaceBtn.title = `Delete ${k}`;
                 deleteRaceBtn.innerHTML = "🗑️";
-                deleteRaceBtn.onclick = async (e) => {
+                
+                deleteRaceBtn.dataset.raceKey = k;
+                deleteRaceBtn.addEventListener('click', async (e) => {
                     e.stopPropagation();
-                    if (confirm(`Are you sure you want to delete ${k}?`)) {
-                        delete window.allRaceMeetings[k];
-                        if (window.computedPredictionsCache[k]) delete window.computedPredictionsCache[k];
-                        if (window.activeRaceKey === k) {
+                    let targetKey = e.currentTarget.dataset.raceKey;
+                    if (confirm(`Are you sure you want to delete ${targetKey}?`)) {
+                        delete window.allRaceMeetings[targetKey];
+                        if (window.computedPredictionsCache[targetKey]) delete window.computedPredictionsCache[targetKey];
+                        if (window.activeRaceKey === targetKey) {
                             let remainingKeys = getSortedRaceKeys();
                             window.activeRaceKey = remainingKeys.length > 0 ? remainingKeys[0] : "";
                         }
                         await sortAndPersistMeetingsObject();
                         updateAllUIComponents();
-                        showNotification(`Successfully deleted ${k}.`, "success");
+                        showNotification(`Successfully deleted ${targetKey}.`, "success");
                     }
-                };
+                });
 
                 let pillBtn = document.createElement('button');
                 pillBtn.className = "flex-grow text-left flex items-center justify-between pr-1 focus:outline-none";
@@ -1507,8 +1521,12 @@ function updateRaceSelector() {
                     <span class="flex-shrink-0 flex items-center gap-0.5">${savedBadgeIcon}${statusIndicator}</span>
                 `;
                 pillBtn.title = k;
-				let encodedKey = encodeURIComponent(k);
-				pillBtn.onclick = () => switchActiveRace(decodeURIComponent(encodedKey));
+                
+                pillBtn.dataset.raceKey = k;
+                pillBtn.addEventListener('click', (e) => {
+                    let targetKey = e.currentTarget.dataset.raceKey;
+                    switchActiveRace(targetKey);
+                });
 
                 pillWrapper.appendChild(deleteRaceBtn);
                 pillWrapper.appendChild(pillBtn);
@@ -3077,11 +3095,11 @@ let analysisHtml = '';
               <li class="runner-card ${bgColor} p-4 border ${borderColor} rounded-lg shadow-sm flex flex-col md:flex-row md:justify-between mb-3 transition-colors">
                     <div class="mb-2 md:mb-0 flex flex-col justify-center">
                         <div class="flex items-center flex-wrap gap-2">
-                            <!-- H2H Comparison Checkbox Added Here -->
+                            <!-- H2H Comparison Checkbox -->
                             <input type="checkbox" class="h2h-checkbox w-4 h-4 text-blue-600 rounded cursor-pointer" data-dog-name="${dog.name}" onchange="handleH2HSelection(this)" title="Select for Head-to-Head Comparison">
 
-                            <!-- MAKE ONLY THE NAME CLICKABLE HERE: -->
-                            <strong onclick="openScoreBreakdownModal('${encodedName}')" class="text-lg ${index === 0 ? 'text-green-900 dark:text-green-200 font-black cursor-pointer hover:text-blue-600 dark:hover:text-blue-400': 'text-slate-800 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400'}">
+                            <!-- SAFE: Uses class and data attribute instead of inline onclick -->
+                            <strong data-dog-name="${encodedName}" class="dog-name-click text-lg ${index === 0 ? 'text-green-900 dark:text-green-200 font-black cursor-pointer hover:text-blue-600 dark:hover:text-blue-400': 'text-slate-800 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400'}">
                                 ${index + 1}. ${dog.name}
                             </strong> 
                             ${sexBadge} 
@@ -3125,6 +3143,13 @@ let analysisHtml = '';
         }
 
 		document.getElementById('runner-analysis-list').innerHTML = analysisHtml;
+		document.querySelectorAll('.dog-name-click').forEach(el => {
+		el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        let encodedName = e.currentTarget.getAttribute('data-dog-name');
+        openScoreBreakdownModal(encodedName);
+    });
+});
 
         // Attach safe click listeners to all bet buttons (prevents apostrophe syntax errors)
         document.querySelectorAll('.bet-btn').forEach(btn => {
@@ -5361,7 +5386,7 @@ function openH2HComparisonModal() {
             <div class="bg-white dark:bg-slate-900 rounded-xl max-w-4xl w-full p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
                 <div class="flex justify-between items-center mb-3 border-b pb-3 dark:border-slate-800">
                     <h3 class="text-xl font-bold text-slate-800 dark:text-slate-100">Multi-Runner Comparison (${comparedDogs.length} Dogs)</h3>
-                    <button onclick="closeH2HModal()" class="text-slate-500 hover:text-slate-700 font-bold text-lg">&times;</button>
+                    <button id="h2h-modal-close-x" class="text-slate-500 hover:text-slate-700 font-bold text-lg">&times;</button>
                 </div>
                 
                 <!-- Overall Advantage Banner -->
@@ -5380,8 +5405,8 @@ function openH2HComparisonModal() {
                 </div>
 
                 <div class="mt-6 flex justify-center gap-3">
-                    <button onclick="clearH2HSelection()" class="bg-rose-100 dark:bg-rose-950/60 hover:bg-rose-200 dark:hover:bg-rose-900 text-rose-700 dark:text-rose-300 font-semibold px-4 py-2 rounded-lg text-sm transition-colors">🗑️ Clear Selection</button>
-                    <button onclick="closeH2HModal()" class="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 font-semibold px-5 py-2 rounded-lg text-sm">Close Comparison</button>
+                    <button id="h2h-clear-btn" class="bg-rose-100 dark:bg-rose-950/60 hover:bg-rose-200 text-rose-700 px-4 py-2 rounded-lg text-sm font-semibold">🗑️ Clear Selection</button>
+                    <button id="h2h-modal-close-btn" class="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-800 dark:text-slate-200 px-5 py-2 rounded-lg text-sm font-semibold">Close Comparison</button>
                 </div>
             </div>
         </div>
@@ -5391,6 +5416,11 @@ function openH2HComparisonModal() {
     modalContainer.id = 'h2h-modal-wrapper';
     modalContainer.innerHTML = modalHTML;
     document.body.appendChild(modalContainer);
+
+    // --- ATTACH CLEAN EVENT LISTENERS ---
+    document.getElementById('h2h-modal-close-x').addEventListener('click', closeH2HModal);
+    document.getElementById('h2h-modal-close-btn').addEventListener('click', closeH2HModal);
+    document.getElementById('h2h-clear-btn').addEventListener('click', clearH2HSelection);
 }
 
 // Listen for the Escape key to close the H2H comparison modal
@@ -5400,6 +5430,13 @@ document.addEventListener('keydown', (e) => {
         if (wrapper) {
             closeH2HModal();
         }
+    }
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+    let compareBtn = document.getElementById('h2h-compare-btn');
+    if (compareBtn) {
+        compareBtn.addEventListener('click', openH2HComparisonModal);
     }
 });
 
