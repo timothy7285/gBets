@@ -5171,28 +5171,62 @@ function openScoreBreakdownModal(dogNameEncoded) {
     let activeRace = window.allRaceMeetings[window.activeRaceKey] || {};
     let trackMeta = `${activeRace.trackName || "Unknown Track"} — ${activeRace.raceDistance || ""} (Race ${activeRace.raceNumber || 1})`;
 
+    // Header & Meta Data
     document.getElementById('breakdown-dog-title').innerText = `${dog.name} (Box ${dog.officialBox || dog.box})`;
     document.getElementById('breakdown-race-meta').innerText = trackMeta;
     document.getElementById('breakdown-lbl-score').innerText = dog.score.toFixed(2);
     document.getElementById('breakdown-lbl-rating').innerText = `★ ${dog.ratingOutOf100 || 50}`;
 
-    let timeVal = dog.rawAvgTime !== null ? dog.rawAvgTime : 30.0;
+    // --- 1. TIME / VARIANT BAR ---
+    let timeVal = dog.rawAvgTime !== null && !isNaN(dog.rawAvgTime) ? dog.rawAvgTime : 30.0;
     document.getElementById('breakdown-val-time').innerText = `${timeVal.toFixed(2)}s Avg`;
     
-    let timeBarElem = document.getElementById('breakdown-bar-time');
-    if (timeBarElem) {
-        timeBarElem.style.width = `${Math.min(100, Math.max(10, (timeVal / 35.0) * 100))}%`;
+    let timeBar = document.getElementById('breakdown-bar-time');
+    if (timeBar) {
+        // Lower time is better in racing. Scale between 23s (fast) and 35s (slow)
+        let timePercent = Math.max(10, Math.min(100, ((35.0 - timeVal) / (35.0 - 23.0)) * 100));
+        timeBar.style.width = `${timePercent}%`;
     }
 
-    document.getElementById('breakdown-val-early').innerText = `1Sec: ${dog.best1Sec}s | Early: ${dog.avgEarly}`;
-    document.getElementById('breakdown-val-box').innerText = `+${(dog.boxBiasBonus || 0).toFixed(1)} pts`;
-    document.getElementById('breakdown-val-traffic').innerText = `${dog.trafficPenalty > 0 ? '+' : ''}${dog.trafficPenalty} pts`;
-    document.getElementById('breakdown-val-recency').innerText = dog.daysSinceLastRun !== null ? `${dog.daysSinceLastRun} days ago` : `Standard`;
+    // --- 2. EARLY SPEED / 1SEC SPLIT (ESR) BAR ---
+    let splitVal = parseFloat(dog.avgTrackDistSplit) || 5.5;
+    document.getElementById('breakdown-val-early').innerText = `1Sec: ${splitVal}s | Early: ${dog.avgEarly || 'N/A'}`;
+    
+    let earlyBar = document.getElementById('breakdown-bar-early'); // Make sure this ID exists on your Early Speed bar element
+    if (earlyBar) {
+        // Lower split is faster. Scale between 5.0s and 7.5s
+        let earlyPercent = Math.max(10, Math.min(100, ((7.5 - splitVal) / (7.5 - 5.0)) * 100));
+        earlyBar.style.width = `${earlyPercent}%`;
+    }
 
+    // --- 3. BOX BIAS BAR ---
+    let boxBonus = dog.boxBiasBonus || 0;
+    document.getElementById('breakdown-val-box').innerText = `+${boxBonus.toFixed(1)} pts`;
+    
+    let boxBar = document.getElementById('breakdown-bar-box'); // Make sure this ID exists on your Box Bias bar element
+    if (boxBar) {
+        // Box bonus typically ranges from -3 to +3 pts
+        let boxPercent = Math.max(10, Math.min(100, ((boxBonus + 3) / 6.0) * 100));
+        boxBar.style.width = `${boxPercent}%`;
+    }
+
+    // --- 4. TRAFFIC PENALTY BAR ---
+    let trafficPenalty = dog.trafficPenalty || 0;
+    document.getElementById('breakdown-val-traffic').innerText = `${trafficPenalty > 0 ? '+' : ''}${trafficPenalty} pts`;
+    
+    let trafficBar = document.getElementById('breakdown-bar-traffic'); // Make sure this ID exists on your Traffic bar element
+    if (trafficBar) {
+        // Penalty ranges from 0 to 5 pts (0 is best/clean map)
+        let trafficPercent = Math.max(10, Math.min(100, (1 - (Math.abs(trafficPenalty) / 5.0)) * 100));
+        trafficBar.style.width = `${trafficPercent}%`;
+    }
+
+    // Text Notes
     document.getElementById('breakdown-note-box').innerText = `📦 ${dog.boxRecordText || 'No box stats'}`;
     document.getElementById('breakdown-note-traffic').innerText = `🚦 ${dog.trafficReason || 'Clean run expected'}`;
     document.getElementById('breakdown-note-recency').innerText = `⏱️ ${dog.recencyText || 'Standard form recency'}`;
 
+    // Smooth Modal Open Transition
     const modal = document.getElementById('score-breakdown-modal');
     const content = document.getElementById('score-breakdown-modal-content');
     if (modal && content) {
