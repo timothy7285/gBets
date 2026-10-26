@@ -2,7 +2,7 @@
 <html lang="en" id="html-root">
 <head>
 <link rel="icon" href="data:,">
-	<meta charset="UTF-8">
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>gBet Greyhound Race Predictor</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -328,7 +328,7 @@
                         <div><label class="block font-bold mb-1">BoxBias: <span id="val-w-boxbias">0.5</span></label><input type="range" id="w-boxbias" min="0" max="2" step="0.1" value="0.5" oninput="updateWeightVal('boxbias')" class="w-full"/></div>
                     </div>
                 </div>
-                
+				                
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                     <div class="bg-slate-50 dark:bg-slate-800 p-4 sm:p-5 rounded-lg border border-slate-200 dark:border-slate-700">
                         <h3 class="text-base sm:text-lg font-bold text-slate-900 dark:text-white mb-3">🏆 Win Probabilities</h3>
@@ -347,7 +347,6 @@
                         </p>
                     </div>
                 </div>
-
                 <h3 class="text-lg font-bold mb-3 text-slate-900 dark:text-white">Runner Analysis & Form Metrics</h3>
                 <ul id="runner-analysis-list" class="space-y-2.5 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
                     <li class="bg-slate-50 dark:bg-slate-800 p-4 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-400 italic text-center">Data not yet processed.</li>
@@ -906,6 +905,14 @@
                     </div>
                 </div>
             </div>
+			
+			<div class="mb-3 flex items-center justify-between bg-slate-100 dark:bg-slate-800/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
+				<div class="flex items-center gap-2">
+					<input type="checkbox" id="kellyCriterionToggle" class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
+					<label for="kellyCriterionToggle" class="text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer">🎯 Use Kelly Criterion Stake</label>
+				</div>
+				<span id="kelly-info-badge" class="text-[10px] font-mono text-slate-500 dark:text-slate-400">Quarter-Kelly (0.25x)</span>
+			</div>			
 
             <div class="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
                 <button onclick="closePlaceBetModal()" class="px-4 py-2 rounded text-xs font-bold bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors">Cancel</button>
@@ -947,6 +954,106 @@
         </div>
     </div>
 
+<!-- Score Breakdown Explainer Modal -->
+<div id="score-breakdown-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+    <div id="score-breakdown-modal-content" class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-lg mx-4 p-6 transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+            <div>
+                <h3 id="breakdown-dog-title" class="text-lg font-black text-slate-900 dark:text-white uppercase tracking-tight">Dog Name (Box X)</h3>
+                <span id="breakdown-race-meta" class="text-xs font-mono text-slate-500">Track & Distance</span>
+            </div>
+            <button onclick="closeScoreBreakdownModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold text-xl p-1">&times;</button>
+        </div>
+
+        <div class="space-y-4 text-xs sm:text-sm">
+            <!-- Overall Score & Rating Card -->
+            <div class="bg-slate-50 dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                <div>
+                    <span class="block text-[11px] font-bold text-slate-400 uppercase">Model Score (Lower = Better)</span>
+                    <strong id="breakdown-lbl-score" class="text-xl font-mono text-slate-900 dark:text-white font-black">0.00</strong>
+                </div>
+                <div class="text-right">
+                    <span class="block text-[11px] font-bold text-slate-400 uppercase">Rating / 100</span>
+                    <strong id="breakdown-lbl-rating" class="text-xl font-mono text-purple-600 dark:text-purple-400 font-black">★ 0</strong>
+                </div>
+            </div>
+
+            <!-- Mini Breakdown Bars Container -->
+            <div class="space-y-3 pt-2">
+                <h4 class="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-xs">Mathematical Component Breakdown</h4>
+                
+                <!-- Time Advantage -->
+                <div class="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div class="flex justify-between items-center mb-1 text-xs font-bold">
+                        <span class="text-slate-700 dark:text-slate-300">⏱️ Time Advantage / Variant</span>
+                        <span id="breakdown-val-time" class="font-mono text-slate-900 dark:text-white">+0.00 pts</span>
+                    </div>
+                    <div class="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                        <div id="breakdown-bar-time" class="bg-blue-600 h-full rounded-full transition-all duration-500" style="width: 50%"></div>
+                    </div>
+                </div>
+
+                <!-- Early Speed / Split -->
+                <div class="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div class="flex justify-between items-center mb-1 text-xs font-bold">
+                        <span class="text-slate-700 dark:text-slate-300">⚡ Early Speed & 1Sec Split (ESR)</span>
+                        <span id="breakdown-val-early" class="font-mono text-slate-900 dark:text-white">+0.00 pts</span>
+                    </div>
+                    <div class="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                        <div id="breakdown-bar-early" class="bg-green-600 h-full rounded-full transition-all duration-500" style="width: 50%"></div>
+                    </div>
+                </div>
+
+                <!-- Box Bias Bonus -->
+                <div class="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div class="flex justify-between items-center mb-1 text-xs font-bold">
+                        <span class="text-slate-700 dark:text-slate-300">📦 Box Bias & Draw Strike Rate</span>
+                        <span id="breakdown-val-box" class="font-mono text-amber-600 dark:text-amber-400">+0.00 pts</span>
+                    </div>
+                    <div class="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                        <div id="breakdown-bar-box" class="bg-amber-500 h-full rounded-full transition-all duration-500" style="width: 50%"></div>
+                    </div>
+                </div>
+
+                <!-- Traffic Risk Penalty -->
+                <div class="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div class="flex justify-between items-center mb-1 text-xs font-bold">
+                        <span class="text-slate-700 dark:text-slate-300">🚦 Traffic Map & Pacer Risk</span>
+                        <span id="breakdown-val-traffic" class="font-mono text-rose-600 dark:text-rose-400">0.00 pts</span>
+                    </div>
+                    <div class="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                        <div id="breakdown-bar-traffic" class="bg-rose-500 h-full rounded-full transition-all duration-500" style="width: 50%"></div>
+                    </div>
+                </div>
+
+                <!-- Layoff / Recency Penalty -->
+                <div class="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div class="flex justify-between items-center mb-1 text-xs font-bold">
+                        <span class="text-slate-700 dark:text-slate-300">⏱️ Layoff & Recency Fitness</span>
+                        <span id="breakdown-val-recency" class="font-mono text-purple-600 dark:text-purple-400">0.00 pts</span>
+                    </div>
+                    <div class="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                        <div id="breakdown-bar-recency" class="bg-purple-500 h-full rounded-full transition-all duration-500" style="width: 50%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Explanatory Notes Footer -->
+            <div class="bg-slate-100 dark:bg-slate-800/80 p-3 rounded-lg text-slate-600 dark:text-slate-400 text-[11px] font-mono space-y-1">
+                <span id="breakdown-note-box" class="block">📦 Box History: --</span>
+                <span id="breakdown-note-traffic" class="block">🚦 Traffic Map: --</span>
+                <span id="breakdown-note-recency" class="block">⏱️ Recency: --</span>
+            </div>
+
+            <div class="flex justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button onclick="closeScoreBreakdownModal()" class="w-full bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg shadow transition-colors text-xs">
+                    Close Explainer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
     <!-- Main Application Logic Script -->
     <script src="script.js"></script>
 
@@ -973,5 +1080,12 @@
       window.db = db;
       window.firebaseTools = { doc, setDoc, getDoc, collection, getDocs };
     </script>
+	
+	<div id="h2h-trigger-container" class="hidden fixed bottom-6 right-6 z-50">
+		<button onclick="openH2HComparisonModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-5 rounded-full shadow-2xl transition-all flex items-center gap-2 border border-blue-400">
+			<span>⚖️ Compare <span id="h2h-selected-names" class="font-normal opacity-90 text-sm"></span></span>
+			<span class="bg-blue-800 text-white px-2 py-0.5 rounded-full text-xs font-mono"><span id="h2h-count">0</span>/3</span>
+		</button>
+	</div>
 </body>
 </html>

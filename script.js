@@ -1507,7 +1507,8 @@ function updateRaceSelector() {
                     <span class="flex-shrink-0 flex items-center gap-0.5">${savedBadgeIcon}${statusIndicator}</span>
                 `;
                 pillBtn.title = k;
-                pillBtn.onclick = () => switchActiveRace(k);
+				let encodedKey = encodeURIComponent(k);
+				pillBtn.onclick = () => switchActiveRace(decodeURIComponent(encodedKey));
 
                 pillWrapper.appendChild(deleteRaceBtn);
                 pillWrapper.appendChild(pillBtn);
@@ -1538,7 +1539,7 @@ async function switchActiveRace(key) {
     window.activeRaceKey = key;
     await sortAndPersistMeetingsObject();
     updateAllUIComponents();
-    
+
     if (window.dogStats && window.dogStats.length > 0) {
         refreshPredictions(false);
     }
@@ -1730,6 +1731,21 @@ function renderBatchSummaryDashboard() {
         let confidence = "-";
         let confBadgeClass = "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300";
 
+        // --- NEW: Calculate total runners for this specific race ---
+		let runnerCount = 0;
+        if (race.dogs && Array.isArray(race.dogs) && race.dogs.length > 0) {
+            runnerCount = race.dogs.length;
+        } else if (race.runners && Array.isArray(race.runners) && race.runners.length > 0) {
+            runnerCount = race.runners.length;
+        } else if (race.dogList && Array.isArray(race.dogList) && race.dogList.length > 0) {
+            runnerCount = race.dogList.length;
+        } else if (window.dogStats && window.dogStats.length > 0) {
+            let computed = computeRacePredictionData(race);
+            if (computed && computed.scoredDogs && computed.scoredDogs.length > 0) {
+                runnerCount = computed.scoredDogs.length;
+            }
+        }
+
         if (window.dogStats && window.dogStats.length > 0) {
             let computed = computeRacePredictionData(race);
             if (computed && computed.scoredDogs.length > 0) {
@@ -1755,7 +1771,11 @@ function renderBatchSummaryDashboard() {
                 <div class="flex flex-col mb-2 pb-2 border-b border-slate-200 dark:border-slate-700">
                     <div class="flex justify-between items-center">
                         <span class="text-xs font-black uppercase text-slate-900 dark:text-white tracking-wide">${race.trackName || 'UNKNOWN'}</span>
-                        <span class="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">Race ${race.raceNumber || '?'}</span>
+                        <div class="flex items-center gap-1.5">
+                            <!-- NEW: Runner count badge -->
+                            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-bold">${runnerCount} Runners</span>
+                            <span class="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">Race ${race.raceNumber || '?'}</span>
+                        </div>
                     </div>
                     <div class="flex justify-between items-center mt-1">
                         <span class="text-[11px] text-slate-500 dark:text-slate-400 font-mono">📅 ${cleanDate}</span>
@@ -2270,10 +2290,61 @@ function filterStatsTable() {
     }
 }
 
+// --- 1. STANDALONE RECENCY WEIGHTING HELPER ---
+function calculateWeightedRecencyAverage(valuesArray) {
+    if (!valuesArray || valuesArray.length === 0) return 0;
+    
+    // Define weights based on recency index (index 0 is most recent start)
+    const weights = [0.30, 0.20, 0.18, 0.12, 0.20]; 
+    
+    let weightedSum = 0;
+    let totalWeight = 0;
+
+    for (let i = 0; i < valuesArray.length; i++) {
+        let val = parseFloat(valuesArray[i]);
+        if (isNaN(val)) continue;
+        
+        let w = i < weights.length ? weights[i] : (0.20 / Math.max(1, valuesArray.length - 4));
+        
+        weightedSum += val * w;
+        totalWeight += w;
+    }
+
+    if (totalWeight === 0) {
+        let validVals = valuesArray.filter(v => !isNaN(parseFloat(v)));
+        if (validVals.length === 0) return 0;
+        return validVals.reduce((a, b) => a + parseFloat(b), 0) / validVals.length;
+    }
+
+    return weightedSum / totalWeight;
+}
+
+// --- 2. YOUR PREDICTION FUNCTION ---
 function computeRacePredictionData(activeRace) {
     let targetDist = activeRace.raceDistance ? activeRace.raceDistance.replace('m', '').trim() : "";
     let targetDistNum = parseFloat(targetDist) || 0;
     let targetTrack = activeRace.trackName ? activeRace.trackName.toUpperCase().trim() : "";
+
+    // Track Speed Benchmarks (Base par times for common distances)
+    const trackBenchmarks = {
+        "MOUNT GAMBIER": { 305: 17.50, 400: 23.20, 512: 30.10, 600: 35.50 },
+        "ANGLE PARK": { 342: 19.60, 515: 30.00, 531: 31.20, 595: 34.80 },
+        "CANNINGTON": { 275: 16.10, 380: 22.00, 520: 30.00, 600: 34.80, 715: 42.00 },
+        "MANDURAH": { 302: 17.20, 400: 22.50, 490: 27.60, 550: 31.00 }
+    };
+
+    let trackKey = targetTrack;
+    let defaultPar = targetDistNum > 0 ? (targetDistNum * 0.058) + 1.0 : 30.0;
+    let trackBenchmark = defaultPar;
+
+    for (let knownTrack in trackBenchmarks) {
+        if (trackKey.includes(knownTrack)) {
+            if (trackBenchmarks[knownTrack][targetDistNum]) {
+                trackBenchmark = trackBenchmarks[knownTrack][targetDistNum];
+            }
+            break;
+        }
+    }
 
     let allTrackDistTimes = [];
     window.dogStats.forEach(stat => {
@@ -2348,10 +2419,15 @@ function computeRacePredictionData(activeRace) {
                 dogAverages[name].sex = stat.sex;
             }
 
-            let parsedDate = stat.date && stat.date !== "-" ? new Date(stat.date) : null;
+			let parsedDate = parseRacingDate(stat.date);
+            let todayCheck = new Date(); // or meetingDate
+            
             if (parsedDate && !isNaN(parsedDate)) {
-                if (!dogAverages[name].lastRunDate || parsedDate > dogAverages[name].lastRunDate) {
-                    dogAverages[name].lastRunDate = parsedDate;
+                // Ensure the past run date is not in the future!
+                if (parsedDate <= todayCheck) {
+                    if (!dogAverages[name].lastRunDate || parsedDate > dogAverages[name].lastRunDate) {
+                        dogAverages[name].lastRunDate = parsedDate;
+                    }
                 }
             }
 
@@ -2444,10 +2520,16 @@ function computeRacePredictionData(activeRace) {
                 dogAverages[name].weightedTimeWeightTotal += finalCompositeWeight;
             }
 
-            if (!isNaN(split1) && statDistNum > 0 && targetDistNum > 0) {
-                let normalizedSplit = (split1 / statDistNum) * targetDistNum;
+				if (!isNaN(split1) && statDistNum > 0) {
+                // Normalize split time relative to the target distance if distances differ, 
+                // or keep it exact if distances match.
+                let normalizedSplit = statDistNum === targetDistNum 
+                    ? split1 
+                    : (split1 / statDistNum) * targetDistNum; // Proportional distance scaling for splits
+
                 dogAverages[name].allTimeSplitSum += normalizedSplit;
                 dogAverages[name].allTimeSplitCount += 1;
+                
                 if (normalizedSplit < dogAverages[name].normBest1Sec) {
                     dogAverages[name].normBest1Sec = normalizedSplit;
                 }
@@ -2480,7 +2562,7 @@ function computeRacePredictionData(activeRace) {
         starterEarlyMap[boxNum] = { name: name, earlyPace: earlyPaceVal };
     });
 
-    let scoredDogs = activeStarters.map(starter => {
+	let scoredDogs = activeStarters.map(starter => {
         let name = starter.starterName.toUpperCase();
         let assignedBox = String(starter.box || "1").trim();
         let boxNum = parseInt(assignedBox) || 4;
@@ -2494,7 +2576,7 @@ function computeRacePredictionData(activeRace) {
         let rawAvgTimeForCalc = null;
         let sex = starter.sex !== "Unknown" ? starter.sex : (dogAverages[name] ? dogAverages[name].sex : "Unknown");
         let formArray = [];
-        let daysSinceLastRun = null;
+        let daysSinceLastRun = null; 
         let boxBiasScoreBonus = 0;
         let boxRecordText = "No prior box stats";
         let trafficPenalty = 0;
@@ -2507,13 +2589,29 @@ function computeRacePredictionData(activeRace) {
             let dStats = dogAverages[name];
             formArray = dStats.formArray;
             
-            if (dStats.lastRunDate) {
-                let today = new Date();
-                let diffTime = today - dStats.lastRunDate;
-                let diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+            // If lastRunDate exists, compute days since last run here
+				if (dStats.lastRunDate) {
+                // 1. Get meeting date or fall back to current date, stripped of hours/minutes
+                let meetingDate = activeRace.meetingDate ? parseRacingDate(activeRace.meetingDate) : new Date();
+                if (!meetingDate || isNaN(meetingDate)) {
+                    meetingDate = new Date();
+                }
+                
+                // Normalize both dates to midnight (00:00:00) to prevent time-of-day offsets
+                let targetDay = new Date(meetingDate.getFullYear(), meetingDate.getMonth(), meetingDate.getDate());
+                let lastRunDay = new Date(dStats.lastRunDate.getFullYear(), dStats.lastRunDate.getMonth(), dStats.lastRunDate.getDate());
+
+                let diffTime = targetDay - lastRunDay;
+                let diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+                
                 if (diffDays >= 0) {
                     daysSinceLastRun = diffDays;
+                } else {
+                    console.warn(`[Turnaround Notice] Future date detected for ${name} (${dStats.lastRunDate}). Setting turnaround to 0 days.`);
+                    daysSinceLastRun = 0; 
                 }
+            } else {
+                console.log(`[Missing Date Notice] No valid lastRunDate found for dog: ${name}`);
             }
 
             if (dStats.weightedTimeWeightTotal > 0) {
@@ -2526,10 +2624,48 @@ function computeRacePredictionData(activeRace) {
                 rawAvgTimeForCalc = avgTimeVal;
             }
 
-            if (dStats.weightedSplitWeightTotal > 0) {
+            let meetingMedian = trackMedianStandard;
+            let trackSpeedVariant = trackBenchmark - meetingMedian;
+            let normalizedAvgTime = avgTimeVal + trackSpeedVariant;
+            variantDifferential = normalizedAvgTime - trackBenchmark;
+
+			// --- HIERARCHICAL 1SEC SPLIT CALCULATION ---
+            let exactDistSplits = [];
+            let closeDistSplits = []; // Splits from similar distances (within 50m)
+
+            if (rawDogRecords[name]) {
+                rawDogRecords[name].forEach(stat => {
+                    let sSplit = parseFloat(stat.split1);
+                    if (isNaN(sSplit) || sSplit < 3.5 || sSplit > 14.0) return; // Expanded safety bounds
+
+                    let sDist = parseFloat(stat.dist) || 0;
+                    let sTrack = (stat.track || "").toUpperCase().trim();
+                    let isSameTrack = targetTrack && (sTrack.includes(targetTrack) || targetTrack.includes(sTrack));
+                    let isExactDist = sDist === targetDistNum;
+                    let isCloseDist = Math.abs(sDist - targetDistNum) <= 50; // Within 50m
+
+                    if (isSameTrack && isExactDist) {
+                        exactDistSplits.push(sSplit);
+                    } else if (isSameTrack && isCloseDist) {
+                        // Normalize close distance splits before pushing
+                        let scaledSplit = (sSplit / sDist) * targetDistNum;
+                        closeDistSplits.push(scaledSplit);
+                    }
+                });
+            }
+
+            if (exactDistSplits.length > 0) {
+                avg1SecVal = exactDistSplits.reduce((a, b) => a + b, 0) / exactDistSplits.length;
+                displayBest1Sec = Math.min(...exactDistSplits).toFixed(2);
+            } else if (closeDistSplits.length > 0) {
+                avg1SecVal = closeDistSplits.reduce((a, b) => a + b, 0) / closeDistSplits.length;
+                displayBest1Sec = Math.min(...closeDistSplits).toFixed(2);
+            } else if (dStats.weightedSplitWeightTotal > 0) {
                 avg1SecVal = dStats.weightedSplitSum / dStats.weightedSplitWeightTotal;
-            } else if (dStats.distSplitCount > 0) {
-                avg1SecVal = dStats.distSplitSum / dStats.distSplitCount;
+                displayBest1Sec = dStats.normBest1Sec !== 999 ? dStats.normBest1Sec.toFixed(2) : "N/A";
+            } else {
+                avg1SecVal = 6.5;
+                displayBest1Sec = "N/A";
             }
 
             variantDifferential = avgTimeVal - trackMedianStandard;
@@ -2564,25 +2700,28 @@ function computeRacePredictionData(activeRace) {
                 displayBestTime = dStats.bestTime.toFixed(2);
             }
 
-            if (dStats.trackDistBest1Sec !== 999) {
-                best1SecVal = dStats.trackDistBest1Sec;
-                displayBest1Sec = dStats.trackDistBest1Sec.toFixed(2);
-            } else if (dStats.normBest1Sec !== 999) {
-                best1SecVal = dStats.normBest1Sec;
-                displayBest1Sec = dStats.normBest1Sec.toFixed(2) + " (Norm)";
-            } else if (dStats.best1Sec !== 999) {
-                best1SecVal = dStats.best1Sec;
-                displayBest1Sec = dStats.best1Sec.toFixed(2);
-            }
-
             if (dStats.earlyCount > 0) {
                 avgEarly = dStats.earlySum / dStats.earlyCount;
                 avgGain = dStats.gainSum / dStats.gainCount;
             }
         }
 
+		// --- LATE SCRATCHING & VACANT BOX INSIDE BONUS ---
         let insideBoxNum = boxNum - 1;
-        if (insideBoxNum >= 1 && starterEarlyMap[insideBoxNum]) {
+        let isInsideVacant = false;
+
+        // Check if the inside box contains a scratched dog or is marked vacant in activeRace
+        if (insideBoxNum >= 1) {
+            let insideStarter = activeRace.starters.find(s => parseInt(s.box) === insideBoxNum);
+            if (insideStarter && (insideStarter.scratched === true || insideStarter.starterName.includes('VACANT'))) {
+                isInsideVacant = true;
+                trafficPenalty -= 1.0; // Reward bonus for clearing the inside traffic risk
+                trafficReason = `Clear Air Advantage: Inside Box ${insideBoxNum} is vacant/scratched`;
+            }
+        }
+
+        // Existing traffic map check for fast early pacers
+        if (!isInsideVacant && insideBoxNum >= 1 && starterEarlyMap[insideBoxNum]) {
             let insideDog = starterEarlyMap[insideBoxNum];
             let currentDogEarly = avgEarly;
             if (currentDogEarly >= 4.0 && insideDog.earlyPace <= 3.5) {
@@ -2590,6 +2729,7 @@ function computeRacePredictionData(activeRace) {
                 trafficReason = `Traffic Risk: Slower early speed trapped outside fast early pacer (Box ${insideBoxNum})`;
             }
         }
+        
         if (boxNum >= 7 && avgGain >= 1.5) {
             trafficPenalty = -0.8;
             trafficReason = `Outside Draw Advantage: Strong closer in wide box ${boxNum}`;
@@ -2598,15 +2738,23 @@ function computeRacePredictionData(activeRace) {
         let variantAdjustmentBonus = - (variantDifferential * 1.5);
         let closingGainVal = avgGain * wClosingGain;
 
+        let earlySpeedRatingBonus = 0;
+        if (avg1SecVal <= 5.30 && avgEarly <= 2.5) {
+            earlySpeedRatingBonus = -1.8; 
+        } else if ((avg1SecVal > 0 && avg1SecVal <= 5.25) || (avgEarly > 0 && avgEarly <= 2.2)) {
+            earlySpeedRatingBonus = -0.9;
+        }
+
         let score = (winDiv * wWinDiv) + 
                     (bestTimeVal * wBestTime) + 
                     (avgTimeVal * wAvgTime) + 
                     (best1SecVal * wBest1Sec) + 
                     (avg1SecVal * wAvg1Sec) + 
-                    (avgEarly * wEarlyPos) - 
+                    (avgEarly * wEarlyPos) + 
                     closingGainVal - 
                     (boxBiasScoreBonus * wBoxBias) + 
                     variantAdjustmentBonus +
+                    earlySpeedRatingBonus +
                     trafficPenalty - 
                     recencyAdjustment;
 
@@ -2631,7 +2779,8 @@ function computeRacePredictionData(activeRace) {
             trafficPenalty: trafficPenalty,
             trafficReason: trafficReason,
             recencyText: recencyText,
-            score: score
+            score: score,
+            expectedValuePercent: 0 
         };
     });
 
@@ -2653,7 +2802,7 @@ function computeRacePredictionData(activeRace) {
 
     let dbScoreRange = databaseWorstScore - databaseBestScore;
 
-    scoredDogs.forEach(dog => {
+scoredDogs.forEach(dog => {
         if (dbScoreRange === 0) {
             dog.ratingOutOf100 = 100;
         } else {
@@ -2685,8 +2834,55 @@ function computeRacePredictionData(activeRace) {
 
     let sumBlended = scoredDogs.reduce((acc, d) => acc + d.winProb, 0);
     if (sumBlended > 0) {
-        scoredDogs.forEach(d => d.winProb = (d.winProb / sumBlended) * 100);
+        scoredDogs.forEach(d => {
+            d.winProb = (d.winProb / sumBlended) * 100;
+            
+            let winDivNum = parseFloat(d.winDiv) || 0;
+            if (winDivNum > 0) {
+                let modelProbDecimal = d.winProb / 100.0;
+                d.expectedValuePercent = (modelProbDecimal * winDivNum - 1.0) * 100;
+            } else {
+                d.expectedValuePercent = -100;
+            }
+        });        
     }
+    
+// Ensure consistent target distance checking across properties
+    let resolvedTargetDist = parseFloat(
+        (typeof activeRace !== 'undefined' && (activeRace.raceDistance || activeRace.distance || activeRace.dist)) || 520
+    );
+
+    scoredDogs.forEach(dog => {
+        let totalWeightedSplit = 0;
+        let validRunsCount = 0;
+
+        // Query the global dogStats repository directly for this dog's history
+        let dogRecords = window.dogStats ? window.dogStats.filter(s => s.name && s.name.toUpperCase() === dog.name.toUpperCase()) : [];
+
+        if (dogRecords && dogRecords.length > 0) {
+            dogRecords.forEach(run => {
+                let s1 = run.split1 || run.split1Sec || run.firstSection || run.sec1;
+                let dist = run.dist || run.distance || run.raceDist;
+
+                if (s1 && s1 !== "-" && dist) {
+                    // Use the robust distance-tier normalizer with the correctly resolved target distance
+                    const normalizedSplit = normalizeEarlySplit(parseFloat(s1), parseFloat(dist), resolvedTargetDist);
+                    
+                    if (!isNaN(normalizedSplit)) {
+                        totalWeightedSplit += normalizedSplit;
+                        validRunsCount++;
+                    }
+                }
+            });
+        }
+
+        // If records were found, use the normalized average; otherwise fallback to existing avg1SecVal or "0.00"
+        if (validRunsCount > 0) {
+            dog.avgTrackDistSplit = (totalWeightedSplit / validRunsCount).toFixed(2);
+        } else if (!dog.avgTrackDistSplit || dog.avgTrackDistSplit === "N/A") {
+            dog.avgTrackDistSplit = "0.00";
+        }
+    });
 
     let confidenceText = "Medium";
     let confidenceBadgeClass = "bg-yellow-50 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-200 border border-yellow-200 dark:border-yellow-700";
@@ -2701,7 +2897,12 @@ function computeRacePredictionData(activeRace) {
         }
     }
 
-    return { scoredDogs, confidenceText, confidenceBadgeClass, scratchedDogs: activeRace.starters.filter(s => s.scratched === true && !s.starterName.includes('VACANT')) };
+    return { 
+        scoredDogs, 
+        confidenceText, 
+        confidenceBadgeClass, 
+        scratchedDogs: activeRace.starters.filter(s => s.scratched === true && !s.starterName.includes('VACANT')) 
+    };
 }
 
 async function refreshPredictions(showNotif = true) {
@@ -2820,19 +3021,25 @@ async function refreshPredictions(showNotif = true) {
             }
         }
 
-        let analysisHtml = '';
-        scoredDogs.forEach((dog, index) => {
-            let sexBadge = dog.sex === 'Dog' ? '<span class="text-blue-600 dark:text-blue-400 text-xs font-bold ml-1">🐶</span>' : (dog.sex === 'Bitch' ? '<span class="text-pink-600 dark:text-pink-400 text-xs font-bold ml-1">🐾</span>' : '');
-            let sparkline = generateSparkline(dog.formArray);
-            let daysSinceText = dog.daysSinceLastRun !== null ? `<span class="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1 block">⏱️ Days Since Last Run: <strong class="text-slate-800 dark:text-slate-200">${dog.daysSinceLastRun} days</strong> (${dog.recencyText})</span>` : `<span class="text-xs font-mono text-slate-400 mt-1 block">⏱️ Days Since Last Run: N/A</span>`;
-            let ratingBadge = dog.ratingOutOf100 !== undefined ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black font-mono bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 ml-2"><span class="text-red-500">&#9733;</span> ${dog.ratingOutOf100}</span>` : '';
-            
-            let isFavorite = favoriteDogName !== "" && dog.name.toUpperCase() === favoriteDogName;
-            let favoriteBadge = isFavorite ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 ml-2">⭐ Favorite</span>` : '';
+let analysisHtml = '';
+		scoredDogs.forEach((dog, index) => {
+			let sexBadge = dog.sex === 'Dog' ? '<span class="text-blue-600 dark:text-blue-400 text-xs font-bold ml-1">🐶</span>' : (dog.sex === 'Bitch' ? '<span class="text-pink-600 dark:text-pink-400 text-xs font-bold ml-1">🐾</span>' : '');
+			let sparkline = generateSparkline(dog.formArray);
+			
+			// --- DECLARE daysSinceText HERE ---
+			let daysSinceText = (dog.daysSinceLastRun !== null && dog.daysSinceLastRun !== undefined) 
+				? `<span class="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1 block">⏱️ Days Since Last Run: <strong class="text-slate-800 dark:text-slate-200">${dog.daysSinceLastRun} days</strong> (${dog.recencyText || ''})</span>` 
+				: `<span class="text-xs font-mono text-slate-400 mt-1 block">⏱️ Days Since Last Run: N/A</span>`;
+			// -----------------------------------
 
-            let pirBadge = getRunningStyleBadge(parseFloat(dog.avgEarly), parseFloat(dog.avgGain));
-            let boxBiasBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">📦 Box ${dog.officialBox}: +${dog.boxBiasBonus.toFixed(1)}</span>`;
-            let trafficBadge = dog.trafficPenalty !== 0 ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800">🚦 Traffic Penalty: ${dog.trafficPenalty > 0 ? '+' : ''}${dog.trafficPenalty}</span>` : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">🚦 Clean Map</span>`;
+			let ratingBadge = dog.ratingOutOf100 !== undefined ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black font-mono bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 ml-2"><span class="text-red-500">&#9733;</span> ${dog.ratingOutOf100}</span>` : '';
+			
+			let isFavorite = favoriteDogName !== "" && dog.name.toUpperCase() === favoriteDogName;
+			let favoriteBadge = isFavorite ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 ml-2">⭐ Favorite</span>` : '';
+
+			let pirBadge = getRunningStyleBadge(parseFloat(dog.avgEarly), parseFloat(dog.avgGain));
+			let boxBiasBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">📦 Box ${dog.officialBox}: +${dog.boxBiasBonus.toFixed(1)}</span>`;
+			let trafficBadge = dog.trafficPenalty !== 0 ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800">🚦 Traffic Penalty: ${dog.trafficPenalty > 0 ? '+' : ''}${dog.trafficPenalty}</span>` : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">🚦 Clean Map</span>`;
 
             let marginDisplay = "";
             if (index === 0) {
@@ -2861,11 +3068,26 @@ async function refreshPredictions(showNotif = true) {
                 rankDisplay = `<strong class="text-lg text-orange-900 dark:text-orange-200 font-black">${index + 1}. ${dog.name}</strong>`;
             }
 
-            analysisHtml += `
-                <li class="${bgColor} p-4 border ${borderColor} rounded-lg shadow-sm flex flex-col md:flex-row md:justify-between mb-3 transition-colors">
+			let encodedName = encodeURIComponent(dog.name);
+            let encodedRaceKey = encodeURIComponent(window.activeRaceKey);
+            let evVal = dog.expectedValuePercent !== undefined ? dog.expectedValuePercent : 0;
+            let valueBadge = evVal >= 8.0 ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">🟢 VALUE (+${evVal.toFixed(1)}% EV)</span>` : '';
+
+			analysisHtml += `
+              <li class="runner-card ${bgColor} p-4 border ${borderColor} rounded-lg shadow-sm flex flex-col md:flex-row md:justify-between mb-3 transition-colors">
                     <div class="mb-2 md:mb-0 flex flex-col justify-center">
-                        <div class="flex items-center flex-wrap gap-1">
-                            ${rankDisplay} ${sexBadge} <span class="text-sm font-mono text-slate-500 dark:text-slate-400 font-bold ml-1">(Box ${dog.officialBox})</span> ${ratingBadge} ${favoriteBadge}
+                        <div class="flex items-center flex-wrap gap-2">
+                            <!-- H2H Comparison Checkbox Added Here -->
+                            <input type="checkbox" class="h2h-checkbox w-4 h-4 text-blue-600 rounded cursor-pointer" data-dog-name="${dog.name}" onchange="handleH2HSelection(this)" title="Select for Head-to-Head Comparison">
+
+                            <!-- MAKE ONLY THE NAME CLICKABLE HERE: -->
+                            <strong onclick="openScoreBreakdownModal('${encodedName}')" class="text-lg ${index === 0 ? 'text-green-900 dark:text-green-200 font-black cursor-pointer hover:text-blue-600 dark:hover:text-blue-400': 'text-slate-800 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400'}">
+                                ${index + 1}. ${dog.name}
+                            </strong> 
+                            ${sexBadge} 
+                            <span class="text-sm font-mono text-slate-500 dark:text-slate-400 font-bold ml-1">(Box ${dog.officialBox})</span> 
+                            ${ratingBadge} 
+                            ${favoriteBadge}
                         </div>
                         <div class="mt-2 flex flex-col gap-1">
                             <div class="flex items-center gap-2">
@@ -2876,10 +3098,11 @@ async function refreshPredictions(showNotif = true) {
                         </div>
                     </div>
                     <div class="text-sm text-slate-700 dark:text-slate-300 md:text-right flex flex-col items-start md:items-end justify-center gap-1.5">
-                        <div class="flex items-center gap-1.5 flex-wrap">${pirBadge} ${boxBiasBadge} ${trafficBadge}</div>
+                        <div class="flex items-center gap-1.5 flex-wrap">${pirBadge} ${boxBiasBadge} ${trafficBadge} ${valueBadge}</div>
+                        
                         <div class="flex items-center gap-2 flex-wrap">
                             <span class="block">Win Div: <strong class="text-slate-900 dark:text-white font-mono text-base">$${dog.winDiv}</strong> | Place Div: <strong class="text-slate-900 dark:text-white font-mono text-base">$${dog.placeDiv}</strong> | Softmax Prob: <strong class="text-green-700 dark:text-green-400 font-mono">${dog.winProb.toFixed(1)}%</strong></span>
-                            <button onclick="openPlaceBetModal('${dog.name.replace(/'/g, "\\'")}', '${window.activeRaceKey.replace(/'/g, "\\'")}', '${activeRace.raceNumber || 1}', ${dog.winDiv}, ${dog.placeDiv})" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-2.5 rounded text-xs shadow transition-colors">💰 Bet</button>
+                           <button data-dog-name="${encodedName}" data-race-key="${encodedRaceKey}" data-race-num="${activeRace.raceNumber || 1}" data-win-div="${dog.winDiv}" data-place-div="${dog.placeDiv}" class="bet-btn bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-2.5 rounded text-xs shadow transition-colors">💰 Bet</button>
                         </div>
                         <span class="block text-slate-500 dark:text-slate-400 text-xs mt-1"><strong>Avg Time: <span class="font-mono text-slate-800 dark:text-slate-200">${dog.avgTrackDistTime}s</span></strong> | <strong>Avg 1Sec: <span class="font-mono text-slate-800 dark:text-slate-200">${dog.avgTrackDistSplit}s</span></strong> | ${marginDisplay}</span>
                         <span class="block text-slate-400 dark:text-slate-500 text-[11px]">Early Pos: ${dog.avgEarly} | Gain: <strong class="text-green-600 dark:text-green-400">+${dog.avgGain}</strong> | Best Time: <span class="font-mono">${dog.bestTime}s</span> | Best 1Sec: <span class="font-mono">${dog.best1Sec}s</span></span>
@@ -2892,15 +3115,32 @@ async function refreshPredictions(showNotif = true) {
             analysisHtml += `<h4 class="font-bold text-pink-700 uppercase tracking-wider text-xs mt-6 mb-2">Scratched Runners</h4>`;
             window.currentComputedResult.scratchedDogs.forEach(dog => {
                 let sexBadge = dog.sex === 'Dog' ? '🐶' : (dog.sex === 'Bitch' ? '🐾' : '');
-                analysisHtml += `<li class="bg-pink-50 dark:bg-pink-950/40 p-3 border border-pink-200 dark:border-pink-800 rounded-lg shadow-sm text-pink-900 dark:text-pink-200 flex justify-between items-center mb-2">
-                    <div><strong class="font-bold">${dog.starterName}</strong> ${sexBadge} <span class="text-xs text-pink-600 font-mono">(Box ${dog.officialBox || dog.box})</span></div>
-                    <span class="bg-pink-200 dark:bg-pink-800 text-pink-800 dark:text-pink-200 border border-pink-300 dark:border-pink-700 text-xs px-2 py-1 rounded shadow-sm font-bold uppercase">Scratched</span>
-                </li>`;
+                analysisHtml += `
+                    <li class="bg-pink-50 dark:bg-pink-950/40 p-3 border border-pink-200 dark:border-pink-800 rounded-lg shadow-sm text-pink-900 dark:text-pink-200 flex justify-between items-center mb-2">
+                        <div><strong class="font-bold">${dog.starterName}</strong> ${sexBadge} <span class="text-xs text-pink-600 font-mono">(Box ${dog.officialBox || dog.box})</span></div>
+                        <span class="bg-pink-200 dark:bg-pink-800 text-pink-800 dark:text-pink-200 border border-pink-300 dark:border-pink-700 text-xs px-2 py-1 rounded shadow-sm font-bold uppercase">Scratched</span>
+                    </li>
+                `;
             });
         }
 
-        document.getElementById('runner-analysis-list').innerHTML = analysisHtml;
+		document.getElementById('runner-analysis-list').innerHTML = analysisHtml;
+
+        // Attach safe click listeners to all bet buttons (prevents apostrophe syntax errors)
+        document.querySelectorAll('.bet-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation(); // Prevents card breakdown modal from opening when clicking bet
+                let dName = decodeURIComponent(btn.getAttribute('data-dog-name'));
+                let tKey = decodeURIComponent(btn.getAttribute('data-race-key'));
+                let rNum = btn.getAttribute('data-race-num');
+                let wDiv = parseFloat(btn.getAttribute('data-win-div')) || 0;
+                let pDiv = parseFloat(btn.getAttribute('data-place-div')) || 0;
+                openPlaceBetModal(encodeURIComponent(dName), encodeURIComponent(tKey), rNum, wDiv, pDiv);
+            });
+        });
+
         renderBatchSummaryDashboard();
+		
         if (showNotif) {
             showNotification("Predictions updated successfully!", "success");
         }
@@ -2942,18 +3182,18 @@ async function saveCurrentPredictions() {
         window.currentComputedResult.actualPlace3 = meeting.actualPlace3;
         window.currentComputedResult.actualPlace4 = meeting.actualPlace4;
 
-        let winningStarter = meeting.starters.find(s => s.starterName.toUpperCase() === meeting.actualWinner.toUpperCase() || s.placing === 1);
-        let officialWinDiv = winningStarter && winningStarter.winDiv > 0 ? winningStarter.winDiv : 0;
-
-        let scoredDogsList = window.currentComputedResult.scoredDogs || [];
+		let scoredDogsList = window.currentComputedResult.scoredDogs || [];
         let topPick = scoredDogsList.length > 0 ? scoredDogsList[0] : null;
         let activeCompetitorsCount = scoredDogsList.length;
         let payoutTier = window.currentComputedResult.manualPayoutTier || (activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only"));
 
         if (topPick) {
             let topPickName = topPick.name || "";
+            let topPickStarter = meeting.starters.find(s => s.starterName.toUpperCase() === topPickName.toUpperCase());
+            let resolvedOfficialWinDiv = (topPickStarter && topPickStarter.winDiv > 0) ? topPickStarter.winDiv : 0;
+
             if (meeting.actualWinner.toUpperCase() === topPickName.toUpperCase()) {
-                window.currentComputedResult.actualWinPayout = officialWinDiv > 0 ? officialWinDiv : (topPick.winDiv > 0 ? topPick.winDiv : 2.0);
+                window.currentComputedResult.actualWinPayout = resolvedOfficialWinDiv > 0 ? resolvedOfficialWinDiv : (topPick.winDiv > 0 ? topPick.winDiv : 2.0);
             } else {
                 window.currentComputedResult.actualWinPayout = 0;
             }
@@ -2967,7 +3207,6 @@ async function saveCurrentPredictions() {
             }
 
             if (eligiblePlaceHit) {
-                let topPickStarter = meeting.starters.find(s => s.starterName.toUpperCase() === topPickName.toUpperCase());
                 let officialPlaceDiv = topPickStarter && topPickStarter.placeDiv > 0 ? topPickStarter.placeDiv : (topPick.placeDiv > 0 ? topPick.placeDiv : 1.2);
                 window.currentComputedResult.actualPlacePayout = officialPlaceDiv;
             } else {
@@ -4168,14 +4407,30 @@ async function resetWalletData() {
     }
 }
 
-function openPlaceBetModal(dogName, trackName, raceNum, winDiv, placeDiv) {
-    document.getElementById('bet-modal-dog-name').value = dogName;
-    document.getElementById('bet-modal-track-name').value = trackName;
-    document.getElementById('bet-modal-race-num').value = raceNum;
-    document.getElementById('bet-modal-windiv').value = winDiv;
-    document.getElementById('bet-modal-placediv').value = placeDiv; // <--- FIXED HERE
+	function openPlaceBetModal(encodedDogName, encodedTrackName, raceNum, winDiv, placeDiv) {
+		let dogName = decodeURIComponent(encodedDogName);
+		let trackName = decodeURIComponent(encodedTrackName);
 
-    document.getElementById('bet-lbl-runner').innerText = dogName;
+		document.getElementById('bet-modal-dog-name').value = dogName;
+		document.getElementById('bet-modal-track-name').value = trackName;
+		document.getElementById('bet-modal-race-num').value = raceNum;
+		document.getElementById('bet-modal-windiv').value = winDiv;
+		document.getElementById('bet-modal-placediv').value = placeDiv;
+
+		document.getElementById('bet-lbl-runner').innerText = dogName;
+		
+	let kellyToggle = document.getElementById('kellyCriterionToggle');
+    if (kellyToggle) {
+        kellyToggle.checked = false;
+        isKellyActive = false;
+        
+        // Remove any old listeners and attach a fresh one
+        kellyToggle.onchange = function() {
+            isKellyActive = this.checked;
+            console.log("Kelly checkbox clicked! Active state:", isKellyActive); // This will show in console now!
+            updateCombinedBetCalculation();
+        };
+    }	
     
     let raceObj = (window.allRaceMeetings && window.allRaceMeetings[trackName]) ? window.allRaceMeetings[trackName] : null;
     let raceDate = raceObj && raceObj.raceDate ? raceObj.raceDate : "";
@@ -4211,11 +4466,71 @@ function openPlaceBetModal(dogName, trackName, raceNum, winDiv, placeDiv) {
     }
 }
 
+let isKellyActive = false;
+
+function toggleKellyCriterion() {
+    let checkbox = document.getElementById('kellyCriterionToggle');
+    isKellyActive = checkbox ? checkbox.checked : false;    
+    // Force an immediate stake calculation update
+    updateCombinedBetCalculation();
+}
+
 function updateCombinedBetCalculation() {
     let winStakeEl = document.getElementById('winStakeInput');
     let placeStakeEl = document.getElementById('placeStakeInput');
-    let winDivEl = document.getElementById('bet-modal-windiv');
+    let winDivInput = document.getElementById('fixedWinOddsInput');
+    let winDivEl = document.getElementById('bet-modal-windiv') || document.getElementById('fixedWinOddsInput');
     let placeDivEl = document.getElementById('bet-modal-placediv');
+
+    if (!winStakeEl) return;
+
+    if (isKellyActive && window.currentComputedResult && window.currentComputedResult.scoredDogs) {
+        let currentDogName = document.getElementById('bet-modal-dog-name').value;
+        let dogObj = window.currentComputedResult.scoredDogs.find(d => d.name.toUpperCase() === currentDogName.toUpperCase());
+        
+        console.log("🔍 Kelly Debug - Looking for dog:", currentDogName);
+        console.log("🔍 Kelly Debug - Found dogObj:", dogObj);
+
+        if (dogObj) {
+            console.log("🔍 Kelly Debug - winProb:", dogObj.winProb);
+            let winDiv = parseFloat(winDivInput ? winDivInput.value : 0) || parseFloat(dogObj.winDiv) || 2.0;
+            let p = (dogObj.winProb || 0) / 100.0; 
+            let q = 1.0 - p;
+            let b = winDiv - 1.0; 
+            
+            console.log("🔍 Kelly Debug - calculated winDiv:", winDiv, "p:", p, "Net Odds b:", b);
+
+            if (b > 0 && p > 0) {
+                let fullKelly = (b * p - q) / b;
+                let quarterKellyFraction = fullKelly > 0 ? (fullKelly * 0.25) : 0.01;
+                
+                let currentWallet = window.userWalletBalance || (window.userWallet && window.userWallet.balance) || parseFloat(localStorage.getItem('userWalletBalance')) || 1000.0; 
+                let optimalStake = currentWallet * quarterKellyFraction;
+                
+                if (optimalStake < 2.5 && p >= 0.20) {
+                    optimalStake = 5.0; 
+                }
+
+                // --- ROUND TO NEAREST $0.50 ---
+                optimalStake = Math.round(optimalStake * 2) / 2;
+                
+                console.log("🎯 Kelly Debug - Rounded Stake:", optimalStake);
+                winStakeEl.value = optimalStake > 0 ? optimalStake.toFixed(2) : "0.00";
+
+                let placeDiv = parseFloat(placeDivEl ? placeDivEl.value : 0) || parseFloat(dogObj.placeDiv) || 0;
+                if (placeStakeEl && optimalStake > 0 && placeDiv > 1.0) {
+                    let calculatedPlaceStake = optimalStake / placeDiv;
+                    // Round to nearest $0.50
+                    calculatedPlaceStake = Math.round(calculatedPlaceStake * 2) / 2;
+                    placeStakeEl.value = calculatedPlaceStake > 0 ? calculatedPlaceStake.toFixed(2) : "0.00";
+                }
+            } else {
+                console.log("⚠️ Kelly Debug - Condition failed: Net odds b or winProb is <= 0");
+            }
+        } else {
+            console.log("❌ Kelly Debug - Dog object could not be found in scoredDogs!");
+        }
+    }
 
     let winStake = winStakeEl ? parseFloat(winStakeEl.value) || 0 : 0;
     let placeStake = placeStakeEl ? parseFloat(placeStakeEl.value) || 0 : 0;
@@ -4820,3 +5135,293 @@ function applySyncOrImportOddsUpdate(existingBet, incomingRaceData) {
   existingBet.winOdds = incomingRaceData.currentWinOdds;
   existingBet.placeOdds = incomingRaceData.currentPlaceOdds;
 }
+
+function openScoreBreakdownModal(dogNameEncoded) {
+    let dogName = decodeURIComponent(dogNameEncoded);
+    if (!window.currentComputedResult || !window.currentComputedResult.scoredDogs) return;
+
+    let dog = window.currentComputedResult.scoredDogs.find(d => d.name.toUpperCase() === dogName.toUpperCase());
+    if (!dog) return;
+
+    let activeRace = window.allRaceMeetings[window.activeRaceKey] || {};
+    let trackMeta = `${activeRace.trackName || "Unknown Track"} — ${activeRace.raceDistance || ""} (Race ${activeRace.raceNumber || 1})`;
+
+    document.getElementById('breakdown-dog-title').innerText = `${dog.name} (Box ${dog.officialBox || dog.box})`;
+    document.getElementById('breakdown-race-meta').innerText = trackMeta;
+    document.getElementById('breakdown-lbl-score').innerText = dog.score.toFixed(2);
+    document.getElementById('breakdown-lbl-rating').innerText = `★ ${dog.ratingOutOf100 || 50}`;
+
+    let timeVal = dog.rawAvgTime !== null ? dog.rawAvgTime : 30.0;
+    document.getElementById('breakdown-val-time').innerText = `${timeVal.toFixed(2)}s Avg`;
+    
+    let timeBarElem = document.getElementById('breakdown-bar-time');
+    if (timeBarElem) {
+        timeBarElem.style.width = `${Math.min(100, Math.max(10, (timeVal / 35.0) * 100))}%`;
+    }
+
+    document.getElementById('breakdown-val-early').innerText = `1Sec: ${dog.best1Sec}s | Early: ${dog.avgEarly}`;
+    document.getElementById('breakdown-val-box').innerText = `+${(dog.boxBiasBonus || 0).toFixed(1)} pts`;
+    document.getElementById('breakdown-val-traffic').innerText = `${dog.trafficPenalty > 0 ? '+' : ''}${dog.trafficPenalty} pts`;
+    document.getElementById('breakdown-val-recency').innerText = dog.daysSinceLastRun !== null ? `${dog.daysSinceLastRun} days ago` : `Standard`;
+
+    document.getElementById('breakdown-note-box').innerText = `📦 ${dog.boxRecordText || 'No box stats'}`;
+    document.getElementById('breakdown-note-traffic').innerText = `🚦 ${dog.trafficReason || 'Clean run expected'}`;
+    document.getElementById('breakdown-note-recency').innerText = `⏱️ ${dog.recencyText || 'Standard form recency'}`;
+
+    const modal = document.getElementById('score-breakdown-modal');
+    const content = document.getElementById('score-breakdown-modal-content');
+    if (modal && content) {
+        modal.classList.remove('hidden');
+        setTimeout(() => {
+            modal.classList.remove('opacity-0');
+            content.classList.remove('scale-95');
+            content.classList.add('scale-100');
+        }, 10);
+    }
+}
+
+function closeScoreBreakdownModal() {
+    const modal = document.getElementById('score-breakdown-modal');
+    const content = document.getElementById('score-breakdown-modal-content');
+    if (!modal || !content) return;
+    
+    modal.classList.add('opacity-0');
+    content.classList.remove('scale-100');
+    content.classList.add('scale-95');
+    setTimeout(() => {
+        modal.classList.add('hidden');
+    }, 300);
+}
+
+function parseRacingDate(dateStr) {
+    if (!dateStr || dateStr === "-" || dateStr === "N/A") return null;
+    if (dateStr instanceof Date && !isNaN(dateStr)) return dateStr;
+    let str = String(dateStr).trim();
+    
+    // Try standard JS parse first
+    let d = new Date(str);
+    if (!isNaN(d)) return d;
+    
+    // Handle split-based parsing for different regional formats
+    let parts = str.split(/[\/\-]/);
+    if (parts.length === 3) {
+        let year, month, day;
+        
+        if (parts[0].length === 4) {
+            // Format: YYYY-MM-DD or YYYY/MM/DD
+            year = parseInt(parts[0], 10);
+            month = parseInt(parts[1], 10) - 1;
+            day = parseInt(parts[2], 10);
+        } else {
+            // Format: DD/MM/YYYY or DD-MM-YYYY
+            day = parseInt(parts[0], 10);
+            month = parseInt(parts[1], 10) - 1;
+            year = parseInt(parts[2], 10);
+            if (year < 100) year += 2000;
+        }
+        
+        let customDate = new Date(year, month, day);
+        if (!isNaN(customDate)) return customDate;
+    }
+    
+    return null;
+}
+
+ //Normalizes and weights an early split (1st section) when comparing past races 
+ //to a target distance, applying acceleration damping across distance tiers.
+ 
+function normalizeEarlySplit(rawSplit, pastDistance, targetDistance) {
+    if (!rawSplit || !pastDistance || !targetDistance || pastDistance === targetDistance) {
+        return rawSplit;
+    }
+
+    const getTier = (dist) => {
+        if (dist < 400) return 'sprint';
+        if (dist <= 550) return 'middle';
+        return 'staying';
+    };
+
+    const pastTier = getTier(pastDistance);
+    const targetTier = getTier(targetDistance);
+
+    let scaledSplit = (rawSplit / pastDistance) * targetDistance;
+
+    if (pastTier !== targetTier) {
+        const dampingFactor = 0.85; 
+        scaledSplit = (scaledSplit * dampingFactor) + ((rawSplit) * (1 - dampingFactor) * (targetDistance / pastDistance));
+    }
+
+    return parseFloat(scaledSplit.toFixed(3));
+}
+
+let selectedH2HDogs = [];
+
+function handleH2HSelection(checkbox) {
+    let dogName = checkbox.getAttribute('data-dog-name');
+    
+    if (checkbox.checked) {
+        if (selectedH2HDogs.length >= 3) {
+            let firstCheckbox = document.querySelector(`.h2h-checkbox[data-dog-name="${selectedH2HDogs[0]}"]`);
+            if (firstCheckbox) firstCheckbox.checked = false;
+            selectedH2HDogs.shift();
+        }
+        selectedH2HDogs.push(dogName);
+    } else {
+        selectedH2HDogs = selectedH2HDogs.filter(name => name !== dogName);
+    }
+
+    let triggerContainer = document.getElementById('h2h-trigger-container');
+    let countSpan = document.getElementById('h2h-count');
+    let namesSpan = document.getElementById('h2h-selected-names');
+
+    if (countSpan) countSpan.textContent = selectedH2HDogs.length;
+
+    if (namesSpan) {
+        if (selectedH2HDogs.length > 0) {
+            namesSpan.textContent = `(${selectedH2HDogs.join(', ')})`;
+        } else {
+            namesSpan.textContent = '';
+        }
+    }
+
+    if (triggerContainer) {
+        if (selectedH2HDogs.length > 0) {
+            triggerContainer.classList.remove('hidden');
+        } else {
+            triggerContainer.classList.add('hidden');
+        }
+    }
+}
+
+function openH2HComparisonModal() {
+    if (selectedH2HDogs.length < 2) {
+        showNotification("Please select at least 2 dogs to compare.");
+        return;
+    }
+
+    let dogsList = window.currentComputedResult?.scoredDogs || [];
+    let comparedDogs = selectedH2HDogs.map(name => dogsList.find(d => d.name.toUpperCase() === name.toUpperCase())).filter(Boolean);
+
+    if (comparedDogs.length < 2) return;
+
+    // --- CALCULATE BEST STAT BENCHMARKS & ADVANTAGE DOG ---
+    let bestScore = Math.min(...comparedDogs.map(d => d.score));
+    let bestWinProb = Math.max(...comparedDogs.map(d => d.winProb));
+    let bestRating = Math.max(...comparedDogs.map(d => d.ratingOutOf100 || 0));
+    
+    let validBestTimes = comparedDogs.map(d => parseFloat(d.bestTime)).filter(t => !isNaN(t));
+    let minBestTime = validBestTimes.length > 0 ? Math.min(...validBestTimes) : null;
+
+    let validSplits = comparedDogs.map(d => parseFloat(d.avgTrackDistSplit)).filter(s => !isNaN(s) && s > 0);
+    let minSplit = validSplits.length > 0 ? Math.min(...validSplits) : null;
+
+    let validEarly = comparedDogs.map(d => parseFloat(d.avgEarly)).filter(e => !isNaN(e));
+    let minEarly = validEarly.length > 0 ? Math.min(...validEarly) : null;
+
+    let validGain = comparedDogs.map(d => parseFloat(d.avgGain)).filter(g => !isNaN(g));
+    let maxGain = validGain.length > 0 ? Math.max(...validGain) : null;
+
+    // Determine overall advantage dog (lowest model score wins)
+    let advantageDog = comparedDogs.reduce((prev, curr) => (prev.score < curr.score) ? prev : curr);
+    // -----------------------------------------------------------
+
+    let columnsHTML = comparedDogs.map((dog, idx) => {
+        let colors = ['text-blue-600', 'text-purple-600', 'text-amber-600'];
+        let colorClass = colors[idx % colors.length];
+        let highlightClass = "bg-green-100 dark:bg-green-950/60 text-green-800 dark:text-green-200 px-1.5 py-0.5 rounded font-bold";
+
+        let scoreVal = dog.score;
+        let winProbVal = dog.winProb;
+        let ratingVal = dog.ratingOutOf100 || 0;
+        let bestTimeVal = parseFloat(dog.bestTime);
+        let splitVal = parseFloat(dog.avgTrackDistSplit);
+        let earlyVal = parseFloat(dog.avgEarly);
+        let gainVal = parseFloat(dog.avgGain);
+
+        return `
+            <div class="bg-slate-50 dark:bg-slate-800 p-4 rounded-lg flex-1 border border-slate-200 dark:border-slate-700">
+                <h4 class="text-lg font-bold ${colorClass}">${dog.name}</h4>
+                <p class="text-sm text-slate-500 dark:text-slate-400 mb-3">Box ${dog.box} (${dog.sex})</p>
+                <ul class="space-y-2 text-left text-sm">
+                    <li><strong>Model Score:</strong> <span class="${scoreVal === bestScore ? highlightClass : ''}">${scoreVal.toFixed(1)}</span></li>
+                    <li><strong>Win Prob:</strong> <span class="${winProbVal === bestWinProb ? highlightClass : ''}">${winProbVal.toFixed(1)}%</span></li>
+                    <li><strong>Rating (O/100):</strong> <span class="${ratingVal === bestRating ? highlightClass : ''}">${dog.ratingOutOf100}</span></li>
+                    <li><strong>Best Time:</strong> <span class="${!isNaN(bestTimeVal) && bestTimeVal === minBestTime ? highlightClass : ''}">${dog.bestTime}</span></li>
+                    <li><strong>Avg 1 Sec Split:</strong> <span class="${!isNaN(splitVal) && splitVal === minSplit ? highlightClass : ''}">${dog.avgTrackDistSplit}</span></li>
+                    <li><strong>Early Pace:</strong> <span class="${!isNaN(earlyVal) && earlyVal === minEarly ? highlightClass : ''}">${dog.avgEarly}</span></li>
+                    <li><strong>Closing Gain:</strong> <span class="${!isNaN(gainVal) && gainVal === maxGain ? highlightClass : ''}">${dog.avgGain}</span></li>
+                    <li><strong>Box Record:</strong> ${dog.boxRecordText}</li>
+                </ul>
+            </div>
+        `;
+    }).join('');
+
+    let modalHTML = `
+        <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div class="bg-white dark:bg-slate-900 rounded-xl max-w-4xl w-full p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
+                <div class="flex justify-between items-center mb-3 border-b pb-3 dark:border-slate-800">
+                    <h3 class="text-xl font-bold text-slate-800 dark:text-slate-100">Multi-Runner Comparison (${comparedDogs.length} Dogs)</h3>
+                    <button onclick="closeH2HModal()" class="text-slate-500 hover:text-slate-700 font-bold text-lg">&times;</button>
+                </div>
+                
+                <!-- Overall Advantage Banner -->
+                <div class="mb-4 p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-lg flex items-center gap-3">
+                    <span class="text-2xl">🏆</span>
+                    <div>
+                        <h4 class="text-xs uppercase font-bold text-emerald-800 dark:text-emerald-300 tracking-wider">Statistical Advantage</h4>
+                        <p class="text-sm font-medium text-emerald-900 dark:text-emerald-200">
+                            <strong>${advantageDog.name}</strong> holds the overall edge with a composite score of <span class="font-mono">${advantageDog.score.toFixed(1)}</span> and a win probability of <span class="font-mono">${advantageDog.winProb.toFixed(1)}%</span>.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-${comparedDogs.length} gap-4">
+                    ${columnsHTML}
+                </div>
+
+                <div class="mt-6 flex justify-center gap-3">
+                    <button onclick="clearH2HSelection()" class="bg-rose-100 dark:bg-rose-950/60 hover:bg-rose-200 dark:hover:bg-rose-900 text-rose-700 dark:text-rose-300 font-semibold px-4 py-2 rounded-lg text-sm transition-colors">🗑️ Clear Selection</button>
+                    <button onclick="closeH2HModal()" class="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 font-semibold px-5 py-2 rounded-lg text-sm">Close Comparison</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    let modalContainer = document.createElement('div');
+    modalContainer.id = 'h2h-modal-wrapper';
+    modalContainer.innerHTML = modalHTML;
+    document.body.appendChild(modalContainer);
+}
+
+// Listen for the Escape key to close the H2H comparison modal
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        let wrapper = document.getElementById('h2h-modal-wrapper');
+        if (wrapper) {
+            closeH2HModal();
+        }
+    }
+});
+
+window.closeH2HModal = function() {
+    let wrapper = document.getElementById('h2h-modal-wrapper');
+    if (wrapper) wrapper.remove();
+};
+
+window.clearH2HSelection = function() {
+    document.querySelectorAll('.h2h-checkbox').forEach(cb => {
+        cb.checked = false;
+    });
+
+    selectedH2HDogs = [];
+    
+    let triggerContainer = document.getElementById('h2h-trigger-container');
+    let countSpan = document.getElementById('h2h-count');
+    let namesSpan = document.getElementById('h2h-selected-names');
+    
+    if (countSpan) countSpan.textContent = "0";
+    if (namesSpan) namesSpan.textContent = "";
+    if (triggerContainer) triggerContainer.classList.add('hidden');
+
+    window.closeH2HModal();
+};
