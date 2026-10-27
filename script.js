@@ -2445,12 +2445,29 @@ function computeRacePredictionData(activeRace) {
     allTrackDistTimes.sort((a, b) => a - b);
     let trackMedianStandard = allTrackDistTimes.length > 0 ? allTrackDistTimes[Math.floor(allTrackDistTimes.length / 2)] : 30.0;
 
-    let dogAverages = {};
+	let dogAverages = {};
     let rawDogRecords = {};
+    let activeDogName = "";
+
+    // --- UNIFORM NAME CLEANING & INHERITANCE ---
     window.dogStats.forEach(stat => {
-        let name = stat.name;
-        if (!rawDogRecords[name]) rawDogRecords[name] = [];
-        rawDogRecords[name].push(stat);
+        let rawName = stat.name ? String(stat.name).trim() : "";
+        
+        if (rawName !== "" && rawName !== '""' && !rawName.startsWith("RACE") && !rawName.startsWith("Dog Name")) {
+            let clean = rawName.replace(/"/g, '').trim();
+            clean = clean.replace(/^\d+\.\s*/, ''); // Strip leading number and dot
+            if (clean.includes('.')) {
+                let parts = clean.split('.', 2);
+                activeDogName = !isNaN(parts[0].trim()) ? parts[1].trim().toUpperCase() : clean.toUpperCase();
+            } else {
+                activeDogName = clean.toUpperCase();
+            }
+        }
+
+        if (activeDogName) {
+            if (!rawDogRecords[activeDogName]) rawDogRecords[activeDogName] = [];
+            rawDogRecords[activeDogName].push(stat);
+        }
     });
 
     for (let name in rawDogRecords) {
@@ -2525,16 +2542,34 @@ function computeRacePredictionData(activeRace) {
             let statBox = String(stat.box || "").trim();
             let pirParsed = parsePir(stat.pir);
 
-            if (statBox && statBox !== "-" && statBox !== "") {
-                if (!dogAverages[name].boxStats[statBox]) {
-                    dogAverages[name].boxStats[statBox] = { starts: 0, wins: 0, places: 0 };
+			statBox = String(stat.box || "").trim();
+            let statBoxNum = parseInt(statBox) || 0;
+
+            if (statBoxNum > 0) {
+                let boxKey = String(statBoxNum);
+                
+                if (!dogAverages[name].boxStats[boxKey]) {
+                    dogAverages[name].boxStats[boxKey] = { starts: 0, wins: 0, places: 0 };
                 }
-                dogAverages[name].boxStats[statBox].starts += 1;
+                dogAverages[name].boxStats[boxKey].starts += 1;
+                
                 if (!isNaN(plc)) {
-                    if (plc === 1) dogAverages[name].boxStats[statBox].wins += 1;
-                    if (plc >= 1 && plc <= 3) dogAverages[name].boxStats[statBox].places += 1;
+                    if (plc === 1) {
+                        dogAverages[name].boxStats[boxKey].wins += 1;
+                    } else if (plc >= 2 && plc <= 3) {
+                        dogAverages[name].boxStats[boxKey].places += 1; // STRICT: 2nd or 3rd only
+                    }
                 }
             }
+
+let boxKey = String(parseInt(statBox) || 0);
+if (dogAverages[name].boxStats[boxKey]) {
+    let bInfo = dogAverages[name].boxStats[boxKey];
+    let actualWins = bInfo.wins || 0;
+    let actualPlaces = bInfo.places || 0;
+
+    boxRecordText = `${actualWins} win(s) / ${actualPlaces} place(s) from ${bInfo.starts} start(s) in Box ${boxKey}`;
+}
 
             if (!isNaN(plc)) {
                 dogAverages[name].totalPlc += plc;
@@ -2645,8 +2680,12 @@ function computeRacePredictionData(activeRace) {
         starterEarlyMap[boxNum] = { name: name, earlyPace: earlyPaceVal };
     });
 
-    let scoredDogs = activeStarters.map(starter => {
-        let name = starter.starterName.toUpperCase();
+	let scoredDogs = activeStarters.map(starter => {
+        let rawStarterName = starter.starterName ? String(starter.starterName).trim() : "";
+        let cleanStarter = rawStarterName.replace(/"/g, '').trim();
+        cleanStarter = cleanStarter.replace(/^\d+\.\s*/, ''); // Strip leading number and dot
+        let name = cleanStarter.toUpperCase();
+
         let assignedBox = String(starter.box || "1").trim();
         let boxNum = parseInt(assignedBox) || 4;
         let pastRaces = rawDogRecords[name] || [];
@@ -2726,11 +2765,17 @@ function computeRacePredictionData(activeRace) {
                 recencyText = `Extended layoff (${daysSinceLastRun} days): Fitness uncertainty penalty applied`;
             }
 
-            if (dStats.boxStats[assignedBox]) {
+if (dStats.boxStats[assignedBox]) {
                 let bInfo = dStats.boxStats[assignedBox];
-                boxRecordText = `${bInfo.wins} win(s) / ${bInfo.places} place(s) from ${bInfo.starts} start(s) in Box ${assignedBox}`;
-                let winStrikeRate = bInfo.starts > 0 ? (bInfo.wins / bInfo.starts) : 0;
-                let placeStrikeRate = bInfo.starts > 0 ? (bInfo.places / bInfo.starts) : 0;
+                
+                let actualWins = bInfo.wins || 0;
+                let actualPlaces = Math.max(0, (bInfo.places || 0) - actualWins);
+
+                // --- OVERRIDE WITH ACCURATE BOX RECORD ---
+				boxRecordText = getForcedAccurateBoxRecord(name, assignedBox, activeRace.trackName, activeRace.distance || activeRace.raceDistance).replace('<br>', '<br>- ');
+                
+                let winStrikeRate = bInfo.starts > 0 ? (actualWins / bInfo.starts) : 0;
+                let placeStrikeRate = bInfo.starts > 0 ? (actualPlaces / bInfo.starts) : 0;
                 boxBiasScoreBonus = (winStrikeRate * 5.0 + placeStrikeRate * 2.5) * (bInfo.starts >= 2 ? 1.3 : 0.8);
             } else {
                 let bNum = parseInt(assignedBox) || 4;
@@ -2806,7 +2851,16 @@ function computeRacePredictionData(activeRace) {
                     trafficPenalty - 
                     recencyAdjustment;
 
-        return {
+		// --- FINAL OVERRIDE FOR CARDS & MODAL ---
+        let exactBoxRecord = getForcedAccurateBoxRecord(
+            name, 
+            assignedBox, 
+            activeRace.trackName, 
+            activeRace.distance || activeRace.raceDistance
+        );
+        boxRecordText = exactBoxRecord.replace('<br>', '<br>- ');        
+		
+		return {
             name: starter.starterName,
             box: assignedBox,
             officialBox: starter.officialBox || assignedBox,
@@ -5374,9 +5428,13 @@ function openH2HComparisonModal() {
     let validGain = comparedDogs.map(d => parseFloat(d.avgGain)).filter(g => !isNaN(g));
     let maxGain = validGain.length > 0 ? Math.max(...validGain) : null;
 
-    // Determine overall advantage dog (lowest model score wins)
     let advantageDog = comparedDogs.reduce((prev, curr) => (prev.score < curr.score) ? prev : curr);
     // -----------------------------------------------------------
+
+    // Active race context
+    let activeRace = (window.allRaceMeetings && window.allRaceMeetings[window.allActiveMeetingKey || window.activeRaceKey]) || window.currentActiveRace || {};
+    let targetTrackName = (activeRace.trackName || window.currentTrackName || "").toUpperCase().trim();
+    let targetDist = String(activeRace.distance || window.currentDistance || "").trim();
 
     let columnsHTML = comparedDogs.map((dog, idx) => {
         let colors = ['text-blue-600', 'text-purple-600', 'text-amber-600'];
@@ -5391,6 +5449,73 @@ function openH2HComparisonModal() {
         let earlyVal = parseFloat(dog.avgEarly);
         let gainVal = parseFloat(dog.avgGain);
 
+        // --- FRESH DYNAMIC BOX RECORD CALCULATION ---
+        let dogNameUpper = dog.name.toUpperCase();
+        let assignedBoxStr = String(dog.box || "").trim();
+
+        let tdStarts = 0, tdWins = 0, tdPlaces = 0;
+        let globalStarts = 0, globalWins = 0, globalPlaces = 0;
+
+        if (window.dogStats && window.dogStats.length > 0) {
+            let activeDogContext = "";
+            window.dogStats.forEach(stat => {
+                let rawName = stat.name ? String(stat.name).trim() : "";
+                if (rawName !== "" && rawName !== '""' && !rawName.startsWith("RACE")) {
+                    if (rawName.includes('.')) {
+                        let parts = rawName.split('.', 2);
+                        activeDogContext = !isNaN(parts[0].trim()) ? parts[1].trim().toUpperCase() : rawName.toUpperCase();
+                    } else {
+                        activeDogContext = rawName.toUpperCase();
+                    }
+                }
+
+                if (activeDogContext === dogNameUpper) {
+                    let statBox = String(stat.box || "").trim();
+                    if (statBox === assignedBoxStr) {
+                        let statTrack = (stat.track || "").toUpperCase().trim();
+                        let statDist = String(stat.distance || stat.dist || "").trim();
+                        let plcNum = parseFloat(stat.plc);
+
+                        if (!isNaN(plcNum)) {
+                            let isWin = (plcNum === 1);
+                            let isPlace = (plcNum >= 2 && plcNum <= 3); // Strictly 2nd or 3rd. Wins DO NOT count as places.
+
+                            // 1. Global Box Record (All starts from assigned box)
+                            globalStarts++;
+                            if (isWin) globalWins++;
+                            if (isPlace) globalPlaces++;
+
+                            // 2. Track & Distance Box Record
+                            let trackMatch = !targetTrackName || statTrack.includes(targetTrackName) || targetTrackName.includes(statTrack);
+                            let distMatch = !targetDist || statDist === targetDist;
+
+                            if (trackMatch && distMatch) {
+                                tdStarts++;
+                                if (isWin) tdWins++;
+                                if (isPlace) tdPlaces++;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        let tdBoxText = tdStarts > 0 
+            ? `${tdWins} win(s) / ${tdPlaces} place(s) from ${tdStarts} start(s) (T&D)` 
+            : `0 win(s) / 0 place(s) from 0 start(s) (T&D)`;
+
+        let globalBoxText = globalStarts > 0 
+            ? `${globalWins} win(s) / ${globalPlaces} place(s) from ${globalStarts} start(s) (All)` 
+            : `0 win(s) / 0 place(s) from 0 start(s) (All)`;
+
+		// --- DIRECT ACCURATE OVERRIDE ---
+        let accurateBoxRecordText = getForcedAccurateBoxRecord(
+            dog.name, 
+            dog.box, 
+            activeRace.trackName, 
+            activeRace.distance || activeRace.raceDistance
+        ).replace('<br>', '<br>- ');
+
         return `
             <div class="bg-slate-50 dark:bg-slate-800 p-4 rounded-lg flex-1 border border-slate-200 dark:border-slate-700">
                 <h4 class="text-lg font-bold ${colorClass}">${dog.name}</h4>
@@ -5403,7 +5528,7 @@ function openH2HComparisonModal() {
                     <li><strong>Avg 1 Sec Split:</strong> <span class="${!isNaN(splitVal) && splitVal === minSplit ? highlightClass : ''}">${dog.avgTrackDistSplit}</span></li>
                     <li><strong>Early Pace:</strong> <span class="${!isNaN(earlyVal) && earlyVal === minEarly ? highlightClass : ''}">${dog.avgEarly}</span></li>
                     <li><strong>Closing Gain:</strong> <span class="${!isNaN(gainVal) && gainVal === maxGain ? highlightClass : ''}">${dog.avgGain}</span></li>
-                    <li><strong>Box Record:</strong> ${dog.boxRecordText}</li>
+                    <li><strong>Box Record:</strong><br>${accurateBoxRecordText}</li>
                 </ul>
             </div>
         `;
@@ -5417,7 +5542,6 @@ function openH2HComparisonModal() {
                     <button id="h2h-modal-close-x" class="text-slate-500 hover:text-slate-700 font-bold text-lg">&times;</button>
                 </div>
                 
-                <!-- Overall Advantage Banner -->
                 <div class="mb-4 p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-lg flex items-center gap-3">
                     <span class="text-2xl">🏆</span>
                     <div>
@@ -5445,7 +5569,6 @@ function openH2HComparisonModal() {
     modalContainer.innerHTML = modalHTML;
     document.body.appendChild(modalContainer);
 
-    // --- ATTACH CLEAN EVENT LISTENERS ---
     document.getElementById('h2h-modal-close-x').addEventListener('click', closeH2HModal);
     document.getElementById('h2h-modal-close-btn').addEventListener('click', closeH2HModal);
     document.getElementById('h2h-clear-btn').addEventListener('click', clearH2HSelection);
@@ -5490,3 +5613,95 @@ window.clearH2HSelection = function() {
 
     window.closeH2HModal();
 };
+
+function cleanDogName(rawName) {
+    if (!rawName) return "";
+    let clean = String(rawName).trim();
+    if (clean === '""' || clean.startsWith("RACE")) return "";
+    
+    // Strip leading number and dot (e.g., "5. Hot Minute" -> "Hot Minute")
+    if (/^\d+\./.test(clean)) {
+        clean = clean.replace(/^\d+\.\s*/, '');
+    }
+    return clean.toUpperCase();
+}
+
+function getAccurateBoxRecord(dogName, assignedBox) {
+    return getForcedAccurateBoxRecord(dogName, assignedBox, null, null);
+}
+
+function calculateBoxRecordForDog(dogName, assignedBox) {
+    return getForcedAccurateBoxRecord(dogName, assignedBox, null, null);
+}
+
+function getForcedAccurateBoxRecord(dogName, assignedBox, targetTrackName, targetDist) {
+    let cleanName = String(dogName || "").replace(/"/g, '').replace(/^\d+\.\s*/, '').trim().toUpperCase();
+    let targetBoxNum = parseInt(assignedBox) || 0;
+    
+    let tdStarts = 0, tdWins = 0, tdPlaces = 0;
+    let globalStarts = 0, globalWins = 0, globalPlaces = 0;
+
+    let activeRace = (window.allRaceMeetings && window.allRaceMeetings[window.activeRaceKey]) || {};
+    let activeTrack = (targetTrackName || activeRace.trackName || "").toUpperCase().trim();
+    let activeDist = String(targetDist || activeRace.raceDistance || "").replace(/\D/g, '').trim();
+
+    if (window.dogStats && window.dogStats.length > 0) {
+        let currentDog = "";
+        let seenStarts = new Set(); // Prevents counting duplicate rows for the same start
+
+        window.dogStats.forEach(stat => {
+            let rawName = stat.name ? String(stat.name).trim() : "";
+            
+            if (rawName !== "" && rawName !== '""' && !rawName.startsWith("RACE") && !rawName.startsWith("Dog Name")) {
+                let clean = rawName.replace(/"/g, '').replace(/^\d+\.\s*/, '').trim().toUpperCase();
+                if (clean.includes('.')) {
+                    let parts = clean.split('.', 2);
+                    currentDog = !isNaN(parts[0].trim()) ? parts[1].trim() : clean;
+                } else {
+                    currentDog = clean;
+                }
+            }
+
+            if (currentDog === cleanName) {
+                let statBoxNum = parseInt(stat.box) || 0;
+                
+                if (statBoxNum === targetBoxNum && targetBoxNum > 0) {
+                    // Create a unique key for this specific race start using date, track, and distance to avoid duplicates
+                    let raceDate = stat.date || stat.raceDate || "";
+                    let statTrack = (stat.track || "").toUpperCase().trim();
+                    let statDist = String(stat.distance || stat.dist || "").replace(/\D/g, '').trim();
+                    let uniqueRowKey = `${raceDate}_${statTrack}_${statDist}_${stat.plc}_${stat.time}`;
+
+                    if (!seenStarts.has(uniqueRowKey)) {
+                        seenStarts.add(uniqueRowKey);
+
+                        let plcNum = parseFloat(stat.plc);
+                        if (!isNaN(plcNum)) {
+                            let isWin = (plcNum === 1);
+                            let isPlace = (plcNum >= 2 && plcNum <= 3);
+
+                            // Global Box Record (All)
+                            globalStarts++;
+                            if (isWin) globalWins++;
+                            if (isPlace) globalPlaces++;
+
+                            // Track & Distance Match
+                            let trackMatches = !activeTrack || statTrack.includes(activeTrack) || activeTrack.includes(statTrack);
+                            let distMatches = !activeDist || statDist === activeDist;
+
+                            if ((!statTrack && !statDist) || (trackMatches && distMatches)) {
+                                tdStarts++;
+                                if (isWin) tdWins++;
+                                if (isPlace) tdPlaces++;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    let tdText = `${tdWins} win(s) / ${tdPlaces} place(s) from ${tdStarts} start(s) (T&D)`;
+    let globalText = `${globalWins} win(s) / ${globalPlaces} place(s) from ${globalStarts} start(s) (All)`;
+    return `${tdText}<br>- ${globalText}`;
+}
