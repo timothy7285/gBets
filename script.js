@@ -2337,6 +2337,74 @@ function calculateWeightedRecencyAverage(valuesArray) {
     return weightedSum / totalWeight;
 }
 
+function getPrioritizedAvgSplit(pastRaces, targetTrack, targetDistance) {
+    if (!pastRaces || pastRaces.length === 0) return { avgSplit: null, sampleSize: 0 };
+
+    // --- TIER 1: Exact Track AND Exact Distance ---
+    let tier1Races = pastRaces.filter(race => 
+        race.track && race.track.toUpperCase() === targetTrack.toUpperCase() && 
+        Number(race.distance) === Number(targetDistance) &&
+        !isNaN(parseFloat(race.split1)) && parseFloat(race.split1) > 0
+    );
+
+    if (tier1Races.length >= 2) {
+        let sum = tier1Races.reduce((acc, r) => acc + parseFloat(r.split1), 0);
+        let sampleSize = tier1Races.length;
+        return { 
+            avgSplit: parseFloat((sum / sampleSize).toFixed(2)), 
+            sampleSize: sampleSize,
+            matchType: 'exact_track_distance' 
+        };
+    }
+
+    // --- TIER 2: Same Track (Any Distance) ---
+    let tier2Races = pastRaces.filter(race => 
+        race.track && race.track.toUpperCase() === targetTrack.toUpperCase() && 
+        !isNaN(parseFloat(race.split1)) && parseFloat(race.split1) > 0
+    );
+
+    let combinedRaces = [...tier1Races];
+    tier2Races.forEach(r => {
+        if (!combinedRaces.includes(r)) combinedRaces.push(r);
+    });
+
+    if (combinedRaces.length > 0) {
+        let normalizedSplits = combinedRaces.map(r => {
+            let raw = parseFloat(r.split1);
+            let dist = parseFloat(r.distance);
+            return (dist !== Number(targetDistance)) ? normalizeEarlySplit(raw, dist, targetDistance) : raw;
+        });
+        
+        let sum = normalizedSplits.reduce((acc, val) => acc + val, 0);
+        let sampleSize = combinedRaces.length;
+        return { 
+            avgSplit: parseFloat((sum / sampleSize).toFixed(2)), 
+            sampleSize: sampleSize,
+            matchType: 'same_track_normalized' 
+        };
+    }
+
+    // --- TIER 3: All Available Past Races (Global Fallback) ---
+    let validGlobalRaces = pastRaces.filter(race => !isNaN(parseFloat(race.split1)) && parseFloat(race.split1) > 0);
+    if (validGlobalRaces.length > 0) {
+        let normalizedSplits = validGlobalRaces.map(r => {
+            let raw = parseFloat(r.split1);
+            let dist = parseFloat(r.distance || targetDistance);
+            return normalizeEarlySplit(raw, dist, targetDistance);
+        });
+        
+        let sum = normalizedSplits.reduce((acc, val) => acc + val, 0);
+        let sampleSize = validGlobalRaces.length;
+        return { 
+            avgSplit: parseFloat((sum / sampleSize).toFixed(2)), 
+            sampleSize: sampleSize,
+            matchType: 'global_fallback' 
+        };
+    }
+
+    return { avgSplit: null, sampleSize: 0, matchType: 'none' };
+}
+
 // --- 2. YOUR PREDICTION FUNCTION ---
 function computeRacePredictionData(activeRace) {
     let targetDist = activeRace.raceDistance ? activeRace.raceDistance.replace('m', '').trim() : "";
@@ -2437,11 +2505,10 @@ function computeRacePredictionData(activeRace) {
                 dogAverages[name].sex = stat.sex;
             }
 
-			let parsedDate = parseRacingDate(stat.date);
-            let todayCheck = new Date(); // or meetingDate
+            let parsedDate = parseRacingDate(stat.date);
+            let todayCheck = new Date(); 
             
             if (parsedDate && !isNaN(parsedDate)) {
-                // Ensure the past run date is not in the future!
                 if (parsedDate <= todayCheck) {
                     if (!dogAverages[name].lastRunDate || parsedDate > dogAverages[name].lastRunDate) {
                         dogAverages[name].lastRunDate = parsedDate;
@@ -2538,12 +2605,10 @@ function computeRacePredictionData(activeRace) {
                 dogAverages[name].weightedTimeWeightTotal += finalCompositeWeight;
             }
 
-				if (!isNaN(split1) && statDistNum > 0) {
-                // Normalize split time relative to the target distance if distances differ, 
-                // or keep it exact if distances match.
+            if (!isNaN(split1) && statDistNum > 0) {
                 let normalizedSplit = statDistNum === targetDistNum 
                     ? split1 
-                    : (split1 / statDistNum) * targetDistNum; // Proportional distance scaling for splits
+                    : (split1 / statDistNum) * targetDistNum;
 
                 dogAverages[name].allTimeSplitSum += normalizedSplit;
                 dogAverages[name].allTimeSplitCount += 1;
@@ -2580,16 +2645,24 @@ function computeRacePredictionData(activeRace) {
         starterEarlyMap[boxNum] = { name: name, earlyPace: earlyPaceVal };
     });
 
-	let scoredDogs = activeStarters.map(starter => {
+    let scoredDogs = activeStarters.map(starter => {
         let name = starter.starterName.toUpperCase();
         let assignedBox = String(starter.box || "1").trim();
         let boxNum = parseInt(assignedBox) || 4;
+        let pastRaces = rawDogRecords[name] || [];
+
+        let splitResult = getPrioritizedAvgSplit(pastRaces, targetTrack, targetDistNum);
+
+        // Assigned safely without duplicate declarations
+        let avg1SecVal = splitResult.avgSplit !== null ? splitResult.avgSplit : 6.5;
+        let splitMatchType = splitResult.matchType;
+        
         let winDiv = parseFloat(starter.winDiv);
         if (isNaN(winDiv) || winDiv === 0) winDiv = 50; 
         let placeDiv = parseFloat(starter.placeDiv);
         if (isNaN(placeDiv)) placeDiv = 0;
         
-        let bestTimeVal = 30.0, avgTimeVal = 30.0, best1SecVal = 6.0, avg1SecVal = 6.0, avgEarly = 4.0, avgGain = 0.0;
+        let bestTimeVal = 30.0, avgTimeVal = 30.0, best1SecVal = 6.0, avgEarly = 4.0, avgGain = 0.0;
         let displayBestTime = "N/A", displayBest1Sec = "N/A";
         let rawAvgTimeForCalc = null;
         let sex = starter.sex !== "Unknown" ? starter.sex : (dogAverages[name] ? dogAverages[name].sex : "Unknown");
@@ -2607,15 +2680,12 @@ function computeRacePredictionData(activeRace) {
             let dStats = dogAverages[name];
             formArray = dStats.formArray;
             
-            // If lastRunDate exists, compute days since last run here
-				if (dStats.lastRunDate) {
-                // 1. Get meeting date or fall back to current date, stripped of hours/minutes
+            if (dStats.lastRunDate) {
                 let meetingDate = activeRace.meetingDate ? parseRacingDate(activeRace.meetingDate) : new Date();
                 if (!meetingDate || isNaN(meetingDate)) {
                     meetingDate = new Date();
                 }
                 
-                // Normalize both dates to midnight (00:00:00) to prevent time-of-day offsets
                 let targetDay = new Date(meetingDate.getFullYear(), meetingDate.getMonth(), meetingDate.getDate());
                 let lastRunDay = new Date(dStats.lastRunDate.getFullYear(), dStats.lastRunDate.getMonth(), dStats.lastRunDate.getDate());
 
@@ -2625,11 +2695,8 @@ function computeRacePredictionData(activeRace) {
                 if (diffDays >= 0) {
                     daysSinceLastRun = diffDays;
                 } else {
-                    console.warn(`[Turnaround Notice] Future date detected for ${name} (${dStats.lastRunDate}). Setting turnaround to 0 days.`);
                     daysSinceLastRun = 0; 
                 }
-            } else {
-                console.log(`[Missing Date Notice] No valid lastRunDate found for dog: ${name}`);
             }
 
             if (dStats.weightedTimeWeightTotal > 0) {
@@ -2647,43 +2714,9 @@ function computeRacePredictionData(activeRace) {
             let normalizedAvgTime = avgTimeVal + trackSpeedVariant;
             variantDifferential = normalizedAvgTime - trackBenchmark;
 
-			// --- HIERARCHICAL 1SEC SPLIT CALCULATION ---
-            let exactDistSplits = [];
-            let closeDistSplits = []; // Splits from similar distances (within 50m)
-
-            if (rawDogRecords[name]) {
-                rawDogRecords[name].forEach(stat => {
-                    let sSplit = parseFloat(stat.split1);
-                    if (isNaN(sSplit) || sSplit < 3.5 || sSplit > 14.0) return; // Expanded safety bounds
-
-                    let sDist = parseFloat(stat.dist) || 0;
-                    let sTrack = (stat.track || "").toUpperCase().trim();
-                    let isSameTrack = targetTrack && (sTrack.includes(targetTrack) || targetTrack.includes(sTrack));
-                    let isExactDist = sDist === targetDistNum;
-                    let isCloseDist = Math.abs(sDist - targetDistNum) <= 50; // Within 50m
-
-                    if (isSameTrack && isExactDist) {
-                        exactDistSplits.push(sSplit);
-                    } else if (isSameTrack && isCloseDist) {
-                        // Normalize close distance splits before pushing
-                        let scaledSplit = (sSplit / sDist) * targetDistNum;
-                        closeDistSplits.push(scaledSplit);
-                    }
-                });
-            }
-
-            if (exactDistSplits.length > 0) {
-                avg1SecVal = exactDistSplits.reduce((a, b) => a + b, 0) / exactDistSplits.length;
-                displayBest1Sec = Math.min(...exactDistSplits).toFixed(2);
-            } else if (closeDistSplits.length > 0) {
-                avg1SecVal = closeDistSplits.reduce((a, b) => a + b, 0) / closeDistSplits.length;
-                displayBest1Sec = Math.min(...closeDistSplits).toFixed(2);
-            } else if (dStats.weightedSplitWeightTotal > 0) {
-                avg1SecVal = dStats.weightedSplitSum / dStats.weightedSplitWeightTotal;
-                displayBest1Sec = dStats.normBest1Sec !== 999 ? dStats.normBest1Sec.toFixed(2) : "N/A";
-            } else {
-                avg1SecVal = 6.5;
-                displayBest1Sec = "N/A";
+            // Set display best 1sec using the prioritized result metadata or fallbacks
+            if (dStats.normBest1Sec !== 999) {
+                displayBest1Sec = dStats.normBest1Sec.toFixed(2);
             }
 
             variantDifferential = avgTimeVal - trackMedianStandard;
@@ -2724,21 +2757,18 @@ function computeRacePredictionData(activeRace) {
             }
         }
 
-		// --- LATE SCRATCHING & VACANT BOX INSIDE BONUS ---
         let insideBoxNum = boxNum - 1;
         let isInsideVacant = false;
 
-        // Check if the inside box contains a scratched dog or is marked vacant in activeRace
         if (insideBoxNum >= 1) {
             let insideStarter = activeRace.starters.find(s => parseInt(s.box) === insideBoxNum);
             if (insideStarter && (insideStarter.scratched === true || insideStarter.starterName.includes('VACANT'))) {
                 isInsideVacant = true;
-                trafficPenalty -= 1.0; // Reward bonus for clearing the inside traffic risk
+                trafficPenalty -= 1.0; 
                 trafficReason = `Clear Air Advantage: Inside Box ${insideBoxNum} is vacant/scratched`;
             }
         }
 
-        // Existing traffic map check for fast early pacers
         if (!isInsideVacant && insideBoxNum >= 1 && starterEarlyMap[insideBoxNum]) {
             let insideDog = starterEarlyMap[insideBoxNum];
             let currentDogEarly = avgEarly;
@@ -2789,7 +2819,8 @@ function computeRacePredictionData(activeRace) {
             best1Sec: displayBest1Sec,
             avgTrackDistTime: avgTimeVal !== 30.0 ? avgTimeVal.toFixed(2) : "N/A",
             rawAvgTime: rawAvgTimeForCalc,
-            avgTrackDistSplit: avg1SecVal !== 6.0 ? avg1SecVal.toFixed(2) : "N/A",
+            avgTrackDistSplit: avg1SecVal !== 6.5 ? avg1SecVal.toFixed(2) : "N/A",
+            splitMatchType: splitMatchType,
             avgEarly: avgEarly.toFixed(1),
             avgGain: avgGain.toFixed(1),
             boxRecordText: boxRecordText,
@@ -2820,7 +2851,7 @@ function computeRacePredictionData(activeRace) {
 
     let dbScoreRange = databaseWorstScore - databaseBestScore;
 
-scoredDogs.forEach(dog => {
+    scoredDogs.forEach(dog => {
         if (dbScoreRange === 0) {
             dog.ratingOutOf100 = 100;
         } else {
@@ -2864,43 +2895,6 @@ scoredDogs.forEach(dog => {
             }
         });        
     }
-    
-// Ensure consistent target distance checking across properties
-    let resolvedTargetDist = parseFloat(
-        (typeof activeRace !== 'undefined' && (activeRace.raceDistance || activeRace.distance || activeRace.dist)) || 520
-    );
-
-    scoredDogs.forEach(dog => {
-        let totalWeightedSplit = 0;
-        let validRunsCount = 0;
-
-        // Query the global dogStats repository directly for this dog's history
-        let dogRecords = window.dogStats ? window.dogStats.filter(s => s.name && s.name.toUpperCase() === dog.name.toUpperCase()) : [];
-
-        if (dogRecords && dogRecords.length > 0) {
-            dogRecords.forEach(run => {
-                let s1 = run.split1 || run.split1Sec || run.firstSection || run.sec1;
-                let dist = run.dist || run.distance || run.raceDist;
-
-                if (s1 && s1 !== "-" && dist) {
-                    // Use the robust distance-tier normalizer with the correctly resolved target distance
-                    const normalizedSplit = normalizeEarlySplit(parseFloat(s1), parseFloat(dist), resolvedTargetDist);
-                    
-                    if (!isNaN(normalizedSplit)) {
-                        totalWeightedSplit += normalizedSplit;
-                        validRunsCount++;
-                    }
-                }
-            });
-        }
-
-        // If records were found, use the normalized average; otherwise fallback to existing avg1SecVal or "0.00"
-        if (validRunsCount > 0) {
-            dog.avgTrackDistSplit = (totalWeightedSplit / validRunsCount).toFixed(2);
-        } else if (!dog.avgTrackDistSplit || dog.avgTrackDistSplit === "N/A") {
-            dog.avgTrackDistSplit = "0.00";
-        }
-    });
 
     let confidenceText = "Medium";
     let confidenceBadgeClass = "bg-yellow-50 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-200 border border-yellow-200 dark:border-yellow-700";
