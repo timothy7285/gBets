@@ -886,33 +886,43 @@
 
             <!-- Fixed Odds Override Section -->
             <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
-                <div class="flex justify-between items-center">
-                    <span class="text-xs font-bold text-slate-700 dark:text-slate-300">Odds Locking / Fixed Rate</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="fixedOddsToggle">
-                        <span class="slider round"></span>
-                    </label>
+				<div class="flex justify-between items-center">
+					<span class="text-xs font-bold text-slate-700 dark:text-slate-300">Odds Locking / Fixed Rate</span>
+					<label class="relative inline-flex items-center cursor-pointer">
+						<!-- Removed 'checked' attribute here -->
+						<input type="checkbox" id="oddsLockToggle" onchange="toggleOddsLockInputs()" class="sr-only peer">
+						<div class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+					</label>
+				</div>
+
+				<!-- Added 'hidden' class here by default -->
+				<div id="fixedOddsInputsContainer" class="hidden grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+					<div>
+						<label for="fixedWinOddsInput" class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Fixed Win Odds</label>
+						<input type="number" id="fixedWinOddsInput" step="0.01" oninput="updateCombinedBetCalculation()" class="w-full text-sm px-3 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none" placeholder="e.g. 3.50">
+					</div>
+					<div>
+						<label for="fixedPlaceOddsInput" class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Fixed Place Odds</label>
+						<input type="number" id="fixedPlaceOddsInput" step="0.01" oninput="updateCombinedBetCalculation()" class="w-full text-sm px-3 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none" placeholder="e.g. 1.60">
+					</div>
+				</div>
+            </div>
+            
+            <!-- Strategy Toggles -->
+            <div class="space-y-2 bg-slate-100 dark:bg-slate-800/60 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <input type="checkbox" id="kellyCriterionToggle" onchange="toggleKellyCriterion()" class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer">
+                        <label for="kellyCriterionToggle" class="text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer">🎯 Use Kelly Criterion Stake</label>
+                    </div>
+                    <span id="kelly-info-badge" class="text-[10px] font-mono text-slate-500 dark:text-slate-400">Quarter-Kelly (0.25x)</span>
                 </div>
 
-                <div id="fixedOddsInputsContainer" class="hidden grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
-                    <div>
-                        <label for="fixedWinOddsInput" class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Fixed Win Odds</label>
-                        <input type="number" id="fixedWinOddsInput" step="0.01" class="w-full text-sm px-3 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none" placeholder="e.g. 3.50">
-                    </div>
-                    <div>
-                        <label for="fixedPlaceOddsInput" class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Fixed Place Odds</label>
-                        <input type="number" id="fixedPlaceOddsInput" step="0.01" class="w-full text-sm px-3 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none" placeholder="e.g. 1.60">
-                    </div>
+                <div class="flex items-center gap-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+                    <input type="checkbox" id="hedgePlaceToggle" onchange="updateCombinedBetCalculation()" class="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer">
+                    <label for="hedgePlaceToggle" class="text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer">Fully Hedge Place (Cover Total Outlay)</label>
                 </div>
             </div>
-			
-			<div class="mb-3 flex items-center justify-between bg-slate-100 dark:bg-slate-800/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
-				<div class="flex items-center gap-2">
-					<input type="checkbox" id="kellyCriterionToggle" class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
-					<label for="kellyCriterionToggle" class="text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer">🎯 Use Kelly Criterion Stake</label>
-				</div>
-				<span id="kelly-info-badge" class="text-[10px] font-mono text-slate-500 dark:text-slate-400">Quarter-Kelly (0.25x)</span>
-			</div>			
 
             <div class="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
                 <button onclick="closePlaceBetModal()" class="px-4 py-2 rounded text-xs font-bold bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors">Cancel</button>
@@ -953,6 +963,67 @@
             </div>
         </div>
     </div>
+	
+<!-- Dutching Calculator Modal -->
+<div id="dutching-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+    <div id="dutching-modal-content" class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-full max-w-xl mx-4 p-6 transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+            <h3 class="text-base font-black text-slate-900 dark:text-white uppercase tracking-wider">🧮 Multi-Runner Dutching Calculator</h3>
+            <button onclick="closeDutchingModal()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold text-lg">&times;</button>
+        </div>
+
+        <div class="space-y-4 text-xs sm:text-sm">
+            <!-- Global Parameters -->
+            <div class="grid grid-cols-2 gap-3">
+                <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Total Target Stake ($)</label>
+                    <input type="number" id="dutch-total-stake" min="1" step="5" value="50" oninput="calculateDutchStakes()" class="w-full text-sm px-3 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none">
+                </div>
+					<div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+						<label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Bet Market Type</label>
+						<input type="text" id="dutch-market-type" value="Win Market Only" readonly class="w-full text-sm px-3 py-1.5 border rounded bg-slate-100 dark:bg-slate-900 font-bold text-slate-500 cursor-not-allowed focus:outline-none">
+					</div>
+				</div>
+            </div>
+
+            <!-- Selected Runners Dynamic Table -->
+            <div class="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                <span class="block text-xs font-bold text-slate-500 uppercase mb-2">Selected Runners & Odds</span>
+                <div id="dutch-runners-container" class="space-y-2.5">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <!-- Dutch Summary Card -->
+            <div class="bg-slate-100 dark:bg-slate-800/80 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700 flex justify-between items-center font-mono">
+                <div>
+                    <span class="block text-[10px] text-slate-400 uppercase font-bold">Total Staked: <strong id="dutch-lbl-total-staked" class="text-slate-900 dark:text-white">$0.00</strong></span>
+                    <span class="block text-[10px] text-slate-400 uppercase font-bold mt-0.5">Equal Return: <strong id="dutch-lbl-target-return" class="text-green-600 dark:text-green-400">$0.00</strong></span>
+                </div>
+                <div class="text-right">
+                    <span class="block text-[10px] text-slate-400 uppercase font-bold">Guaranteed Profit</span>
+                    <span id="dutch-lbl-profit" class="text-base font-black text-purple-600 dark:text-purple-400">$0.00 (0.0%)</span>
+                </div>
+            </div>
+
+					<div class="flex justify-between items-center pt-4 border-t border-slate-100 dark:border-slate-800">
+						<!-- Clear Dogs Button -->
+						<button onclick="clearDutchSelections()" type="button" class="px-3 py-2 rounded text-xs font-bold text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors flex items-center gap-1">
+							<span>🗑️ Clear Dogs</span>
+						</button>
+
+						<div class="flex gap-2">
+							<button onclick="closeDutchingModal()" class="px-4 py-2 rounded text-xs font-bold bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors">Cancel</button>
+							<button onclick="confirmAndPlaceDutchBets()" type="button" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-lg shadow transition-colors text-xs">
+								🚀 Place All Dutch Wagers
+							</button>
+						</div>
+					</div>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>	
 
 <!-- Score Breakdown Explainer Modal -->
 <div id="score-breakdown-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
@@ -1081,11 +1152,13 @@
       window.firebaseTools = { doc, setDoc, getDoc, collection, getDocs };
     </script>
 	
-	<div id="h2h-trigger-container" class="hidden fixed bottom-6 right-6 z-50">
-		<button onclick="openH2HComparisonModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-5 rounded-full shadow-2xl transition-all flex items-center gap-2 border border-blue-400">
-			<span>⚖️ Compare <span id="h2h-selected-names" class="font-normal opacity-90 text-sm"></span></span>
-			<span class="bg-blue-800 text-white px-2 py-0.5 rounded-full text-xs font-mono"><span id="h2h-count">0</span>/3</span>
-		</button>
-	</div>
+<div id="h2h-trigger-container" class="hidden fixed bottom-6 right-6 z-50 flex items-center gap-2">
+    <button onclick="openH2HComparisonModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-full shadow-2xl transition-all flex items-center gap-2 border border-blue-400 text-xs">
+        <span>⚖️ Compare (<span id="h2h-count">0</span>)</span>
+    </button>
+    <button onclick="openDutchingModalFromCheckboxes()" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-full shadow-2xl transition-all flex items-center gap-2 border border-purple-400 text-xs">
+        <span>🧮 Dutch (<span id="dutch-count">0</span>)</span>
+    </button>
+</div>
 </body>
 </html>

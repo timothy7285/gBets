@@ -301,7 +301,7 @@ function applyPreset(presetType) {
     }
 
     if (window.currentComputedResult) {
-        refreshPredictions();
+        refreshPredictions();		
     }
 }
 
@@ -2971,6 +2971,168 @@ if (dStats.boxStats[assignedBox]) {
     };
 }
 
+// Swap runner ranks manually in the current computed result
+function movePredictionRank(index, direction) {
+    if (!window.currentComputedResult || !window.currentComputedResult.scoredDogs) return;
+    let dogs = window.currentComputedResult.scoredDogs;
+    
+    let targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= dogs.length) return;
+
+    // Swap positions
+    let temp = dogs[index];
+    dogs[index] = dogs[targetIndex];
+    dogs[targetIndex] = temp;
+
+    // Flag as manually ordered
+    window.currentComputedResult.isManuallyOrdered = true;
+
+    // Directly re-render the win probabilities container and top pick without recalculating model scores
+    renderWinProbabilitiesMeter();
+}
+
+function renderWinProbabilitiesMeter() {
+    if (!window.currentComputedResult || !window.currentComputedResult.scoredDogs) return;
+    let scoredDogs = window.currentComputedResult.scoredDogs;
+
+    let container = document.getElementById('probability-win-meter-container');
+    if (!container) return;
+
+    let meterHtml = '';
+    scoredDogs.forEach((dog, idx) => {
+        let colorClass = idx === 0 ? 'text-green-600 dark:text-green-400 font-black' : (idx === 1 ? 'text-yellow-600 dark:text-yellow-400 font-bold' : 'text-slate-700 dark:text-slate-300 font-medium');
+        let barColor = idx === 0 ? 'bg-green-500' : (idx === 1 ? 'bg-yellow-400' : 'bg-slate-400 dark:bg-slate-600');
+        let sexIcon = dog.sex === 'Dog' ? '🐶' : (dog.sex === 'Bitch' ? '🐾' : '');
+        let probVal = (dog.winProb || 0).toFixed(1);
+
+        let manualControls = `
+            <div class="flex items-center gap-1 ml-2 inline-flex">
+                <button onclick="movePredictionRank(${idx}, -1)" ${idx === 0 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"'}>▲</button>
+                <button onclick="movePredictionRank(${idx}, 1)" ${idx === scoredDogs.length - 1 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"'}>▼</button>
+            </div>
+        `;
+
+        meterHtml += `
+            <div class="space-y-1 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                <div class="flex justify-between items-center text-sm">
+                    <div class="flex items-center gap-1">
+                        <span class="${colorClass}">${idx + 1}. ${dog.name} ${sexIcon} <span class="text-xs font-mono text-slate-400">(B${dog.officialBox || dog.box})</span></span>
+                        ${manualControls}
+                    </div>
+                    <span class="font-mono font-bold text-xs">${probVal}%</span>
+                </div>
+                <div class="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                    <div class="${barColor} h-2 rounded-full transition-all duration-500" style="width: ${probVal}%"></div>
+                </div>
+            </div>
+        `;
+    });
+
+    if (window.currentComputedResult.isManuallyOrdered) {
+        meterHtml += `<div class="mt-2 text-right"><button onclick="resetPredictionManualOrder()" class="text-[11px] text-purple-600 dark:text-purple-400 font-bold hover:underline cursor-pointer">🔄 Reset Manual Order</button></div>`;
+    }
+
+    container.innerHTML = meterHtml;
+
+    // Update top pick header instantly
+    let topSexIcon = scoredDogs[0].sex === 'Dog' ? '🐶' : (scoredDogs[0].sex === 'Bitch' ? '🐾' : '');
+    let winningNameEl = document.getElementById('winning-dog-name');
+    if (winningNameEl) winningNameEl.innerText = `${scoredDogs[0].name} ${topSexIcon}`;
+
+    // --- SEAMLESS DOM REORDERING FOR RUNNER CARDS ---
+    let analysisList = document.getElementById('runner-analysis-list');
+    if (analysisList) {
+        scoredDogs.forEach(dog => {
+            // Find each dog's existing card in the DOM by its name or data attribute
+            let card = Array.from(analysisList.children).find(li => {
+                let text = li.innerText || "";
+                return text.toUpperCase().includes(dog.name.toUpperCase());
+            });
+            if (card) {
+                analysisList.appendChild(card); // Moves the existing card element to the bottom of the list in the exact new sorted order
+            }
+        });
+    }
+}
+
+function resetPredictionManualOrder() {
+    refreshPredictions(false);
+}
+
+function renderRunnerAnalysisList() {
+    if (!window.currentComputedResult || !window.currentComputedResult.scoredDogs) return;
+    let scoredDogs = window.currentComputedResult.scoredDogs;
+    
+    let analysisHtml = '';
+    scoredDogs.forEach((dog, index) => {
+        let sexBadge = dog.sex === 'Dog' ? '<span class="text-blue-600 dark:text-blue-400 text-xs font-bold ml-1">🐶</span>' : (dog.sex === 'Bitch' ? '<span class="text-pink-600 dark:text-pink-400 text-xs font-bold ml-1">🐾</span>' : '');
+        let sparkline = typeof generateSparkline === 'function' ? generateSparkline(dog.formArray) : '';
+        
+        let daysSinceText = (dog.daysSinceLastRun !== null && dog.daysSinceLastRun !== undefined) 
+            ? `<span class="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1 block">⏱️ Days Since Last Run: <strong class="text-slate-800 dark:text-slate-200">${dog.daysSinceLastRun} days</strong> (${dog.recencyText || ''})</span>` 
+            : `<span class="text-xs font-mono text-slate-400 mt-1 block">⏱️ Days Since Last Run: N/A</span>`;
+
+        let ratingBadge = dog.ratingOutOf100 !== undefined ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300">Rating: ${dog.ratingOutOf100}/100</span>` : '';
+        let modelScoreDisplay = dog.score !== undefined ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-green-100 dark:bg-green-950/60 text-green-800 dark:text-green-300 border border-green-300">Score: ${dog.score.toFixed(1)}</span>` : '';
+        let winProbDisplay = dog.winProb !== undefined ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border border-blue-300">Win Prob: ${dog.winProb.toFixed(1)}%</span>` : '';
+
+        analysisHtml += `
+            <li class="bg-white dark:bg-slate-900 p-4 border border-slate-200 dark:border-slate-800 rounded-lg shadow-sm hover:border-slate-300 transition-colors cursor-pointer dog-name-click" data-dog-name="${dog.name}">
+                <div class="flex justify-between items-start mb-2">
+                    <div>
+                        <span class="text-xs font-bold text-slate-400 font-mono">#${index + 1}</span>
+                        <strong class="font-black text-slate-900 dark:text-white text-base ml-1">${dog.name}</strong> ${sexBadge}
+                        <span class="text-xs text-slate-500 font-mono ml-2">(Box ${dog.officialBox || dog.box})</span>
+                    </div>
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        ${modelScoreDisplay}
+                        ${winProbDisplay}
+                        ${ratingBadge}
+                    </div>
+                </div>
+                <div class="space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="font-mono bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">Best: <strong>${dog.bestTime}s</strong></span>
+                        <span class="font-mono bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">Avg: <strong>${dog.avgTime}s</strong></span>
+                        <span class="font-mono bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">1 Sec Split: <strong>${dog.avgTrackDistSplit}</strong></span>
+                    </div>
+                    ${daysSinceText}
+                    <div class="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                        <span class="text-slate-500 text-[11px]">Form: ${sparkline}</span>
+                        <span class="block text-slate-400 dark:text-slate-500 text-[11px]">Early Pos: ${dog.avgEarly} | Gain: <strong class="text-green-600 dark:text-green-400">+${dog.avgGain}</strong></span>
+                    </div>
+                </div>
+            </li>
+        `;
+    });
+
+    if (window.currentComputedResult.scratchedDogs && window.currentComputedResult.scratchedDogs.length > 0) {
+        analysisHtml += `<h4 class="font-bold text-pink-700 uppercase tracking-wider text-xs mt-6 mb-2">Scratched Runners</h4>`;
+        window.currentComputedResult.scratchedDogs.forEach(dog => {
+            let sexBadge = dog.sex === 'Dog' ? '🐶' : (dog.sex === 'Bitch' ? '🐾' : '');
+            analysisHtml += `
+                <li class="bg-pink-50 dark:bg-pink-950/40 p-3 border border-pink-200 dark:border-pink-800 rounded-lg shadow-sm text-pink-900 dark:text-pink-200 flex justify-between items-center mb-2">
+                    <div><strong class="font-bold">${dog.starterName}</strong> ${sexBadge} <span class="text-xs text-pink-600 font-mono">(Box ${dog.officialBox || dog.box})</span></div>
+                    <span class="bg-pink-200 dark:bg-pink-800 text-pink-800 dark:text-pink-200 border border-pink-300 dark:border-pink-700 text-xs px-2 py-1 rounded shadow-sm font-bold uppercase">Scratched</span>
+                </li>
+            `;
+        });
+    }
+
+    let listContainer = document.getElementById('runner-analysis-list');
+    if (listContainer) {
+        listContainer.innerHTML = analysisHtml;
+        // Re-bind click listeners for modal details
+        document.querySelectorAll('.dog-name-click').forEach(el => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                let encodedName = e.currentTarget.getAttribute('data-dog-name');
+                if (typeof openScoreBreakdownModal === 'function') openScoreBreakdownModal(encodedName);
+            });
+        });
+    }
+}
+
 async function refreshPredictions(showNotif = true) {
     if (!window.activeRaceKey || !window.allRaceMeetings[window.activeRaceKey] || !window.dogStats || window.dogStats.length === 0) {
         if (showNotif) {
@@ -3038,30 +3200,53 @@ async function refreshPredictions(showNotif = true) {
             actualPlacePayout: defaultPlacePayout,
             weights: appliedWeights
         };
-
+			
+			processAdvancedProbabilityAndValue();
+		
         let confBadgeHTML = `<span class="text-[11px] px-2 py-0.5 rounded font-bold ${computed.confidenceBadgeClass}">${computed.confidenceText} Confidence</span>`;
         document.getElementById('confidence-indicator-container').innerHTML = confBadgeHTML;
 
-        let meterHtml = '';
+		let meterHtml = '';
         scoredDogs.forEach((dog, idx) => {
             let colorClass = idx === 0 ? 'text-green-600 dark:text-green-400 font-black' : (idx === 1 ? 'text-yellow-600 dark:text-yellow-400 font-bold' : 'text-slate-700 dark:text-slate-300 font-medium');
             let barColor = idx === 0 ? 'bg-green-500' : (idx === 1 ? 'bg-yellow-400' : 'bg-slate-400 dark:bg-slate-600');
             let sexIcon = dog.sex === 'Dog' ? '🐶' : (dog.sex === 'Bitch' ? '🐾' : '');
-            let probVal = dog.winProb.toFixed(1);
+            let probVal = (dog.winProb || 0).toFixed(1);
+
+            let manualControls = `
+                <div class="flex items-center gap-1 ml-2 inline-flex">
+                    <button onclick="movePredictionRank(${idx}, -1)" ${idx === 0 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"'}>▲</button>
+                    <button onclick="movePredictionRank(${idx}, 1)" ${idx === scoredDogs.length - 1 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"'}>▼</button>
+                </div>
+            `;
 
             meterHtml += `
-                <div class="space-y-1">
+                <div class="space-y-1 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
                     <div class="flex justify-between items-center text-sm">
-                        <span class="${colorClass}">${idx + 1}. ${dog.name} ${sexIcon} <span class="text-xs font-mono text-slate-400">(B${dog.officialBox})</span></span>
+                        <div class="flex items-center gap-1">
+                            <span class="${colorClass}">${idx + 1}. ${dog.name} ${sexIcon} <span class="text-xs font-mono text-slate-400">(B${dog.officialBox || dog.box})</span></span>
+                            ${manualControls}
+                        </div>
                         <span class="font-mono font-bold text-xs">${probVal}%</span>
                     </div>
-                    <div class="w-full bg-slate-200 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
-                        <div class="${barColor} h-2.5 rounded-full transition-all duration-500" style="width: ${probVal}%"></div>
+                    <div class="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                        <div class="${barColor} h-2 rounded-full transition-all duration-500" style="width: ${probVal}%"></div>
                     </div>
                 </div>
             `;
         });
+
+        if (window.currentComputedResult.isManuallyOrdered) {
+            meterHtml += `<div class="mt-2 text-right"><button onclick="resetPredictionManualOrder()" class="text-[11px] text-purple-600 dark:text-purple-400 font-bold hover:underline cursor-pointer">🔄 Reset Manual Order</button></div>`;
+        }
+
         document.getElementById('probability-win-meter-container').innerHTML = meterHtml;
+
+        // Add a reset button if manually ordered
+        if (window.currentComputedResult.isManuallyOrdered) {
+            meterHtml += `<div class="mt-2 text-right"><button onclick="resetPredictionManualOrder()" class="text-[11px] text-purple-600 dark:text-purple-400 font-bold hover:underline">🔄 Reset Manual Order</button></div>`;
+            document.getElementById('probability-win-meter-container').innerHTML = meterHtml;
+        }
         
         let topSexIcon = scoredDogs[0].sex === 'Dog' ? '🐶' : (scoredDogs[0].sex === 'Bitch' ? '🐾' : '');
         document.getElementById('winning-dog-name').innerText = `${scoredDogs[0].name} ${topSexIcon}`;
@@ -3673,6 +3858,11 @@ function renderSavedPredictions() {
         let distPart = raceDistance ? ` (${raceDistance})` : '';
         let displayTitle = `${trackName}${!trackName.includes(raceDistance) ? distPart : ''}`;
         
+		// --- ADD THE MANUAL BADGE LOGIC HERE ---
+        let manualBadge = item.isManuallyOrdered ? 
+            `<span class="ml-2 px-1.5 py-0.5 rounded text-[10px] font-black bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-300" title="Manually Adjusted Prediction Order">M</span>` : '';
+        // ----------------------------------------
+		
         let topPickName = scoredDogsList.length > 0 ? (scoredDogsList[0].name || "") : "";
         let secondPickName = scoredDogsList.length > 1 ? (scoredDogsList[1].name || "") : "";
         let thirdPickName = scoredDogsList.length > 2 ? (scoredDogsList[2].name || "") : "";
@@ -3747,12 +3937,12 @@ function renderSavedPredictions() {
             }
         }
 
-        html += `
+			html += `
             <div class="bg-white dark:bg-slate-900 p-5 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm saved-item-card">
                 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 border-b border-slate-100 dark:border-slate-800 pb-2 gap-2">
                     <div>
                         <button onclick="showSavedPredictionDetails(${actualIndex})" title="Click to view full historical analysis" class="font-black text-slate-900 dark:text-white text-lg tracking-tight hover:text-blue-600 dark:hover:text-blue-400 transition-colors text-left flex items-center gap-1.5 focus:outline-none">
-                            <span>${displayTitle}</span> 
+                            <span>${displayTitle}</span>${manualBadge}
                             <svg class="w-5 h-5 text-slate-400 hover:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
                         </button>
                         <span class="text-xs text-slate-400 font-mono mt-1 block">${item.timestamp || ''} (${activeCompetitorsCount} runners)</span>
@@ -4541,6 +4731,7 @@ async function resetWalletData() {
 
 let isKellyActive = false;
 
+// 1. Toggle Handler for the Kelly Checkbox
 function toggleKellyCriterion() {
     let checkbox = document.getElementById('kellyCriterionToggle');
     isKellyActive = checkbox ? checkbox.checked : false;    
@@ -4548,68 +4739,150 @@ function toggleKellyCriterion() {
     updateCombinedBetCalculation();
 }
 
+// 2. Standalone Protected Stake Calculator (Place return covers total outlay)
+function calculateProtectedStake(bankroll, probWin, probPlace, oddsWin, oddsPlace, kellyMultiplier = 0.25) {
+    // Standard Kelly for Win (adjusted by fractional multiplier)
+    let qWin = 1 - probWin;
+    let rawKellyWin = (oddsWin * probWin - qWin) / oddsWin;
+    let stakeWin = Math.max(0, bankroll * rawKellyWin * kellyMultiplier);
+
+    // Standard Kelly for Place (adjusted by fractional multiplier)
+    let qPlace = 1 - probPlace;
+    let rawKellyPlace = (oddsPlace * probPlace - qPlace) / oddsPlace;
+    let stakePlace = Math.max(0, bankroll * rawKellyPlace * kellyMultiplier);
+
+    // Enforce coverage constraint: Place return must cover (StakeWin + StakePlace)
+    let requiredPlaceReturn = stakeWin + stakePlace;
+    let actualPlaceReturn = stakePlace * oddsPlace;
+    let isFullyCovered = actualPlaceReturn >= requiredPlaceReturn;
+
+    if (!isFullyCovered && oddsPlace > 1) {
+        // Scale down win stake to match what the place return can safely insure
+        stakeWin = (stakePlace * oddsPlace) - stakePlace;
+        if (stakeWin < 0) stakeWin = 0;
+    }
+
+    return { 
+        stakeWin: parseFloat(stakeWin.toFixed(2)), 
+        stakePlace: parseFloat(stakePlace.toFixed(2)),
+        totalOutlay: parseFloat((stakeWin + stakePlace).toFixed(2)),
+        projectedPlaceReturn: parseFloat(actualPlaceReturn.toFixed(2)),
+        isFullyCovered
+    };
+}
+
+// 3. Main Modal & Bet Slip Calculation Orchestrator (With Input Field Debugging)
 function updateCombinedBetCalculation() {
     let winStakeEl = document.getElementById('winStakeInput');
     let placeStakeEl = document.getElementById('placeStakeInput');
-    let winDivInput = document.getElementById('fixedWinOddsInput');
-    let winDivEl = document.getElementById('bet-modal-windiv') || document.getElementById('fixedWinOddsInput');
-    let placeDivEl = document.getElementById('bet-modal-placediv');
+    
+    // Check multiple potential IDs for your odds input fields
+    let winDivInput = document.getElementById('fixedWinOddsInput') || 
+                      document.getElementById('bet-modal-windiv') || 
+                      document.getElementById('winOddsInput');
+                      
+    let placeDivInput = document.getElementById('fixedPlaceOddsInput') || 
+                        document.getElementById('bet-modal-placediv') || 
+                        document.getElementById('placeOddsInput');
 
-    if (!winStakeEl) return;
+    let oddsLockToggle = document.getElementById('oddsLockToggle') || 
+                         document.getElementById('fixedRateToggle') || 
+                         document.getElementById('lockOddsToggle');
+                         
+    let hedgeToggle = document.getElementById('hedgePlaceToggle');
 
-    if (isKellyActive && window.currentComputedResult && window.currentComputedResult.scoredDogs) {
-        let currentDogName = document.getElementById('bet-modal-dog-name').value;
-        let dogObj = window.currentComputedResult.scoredDogs.find(d => d.name.toUpperCase() === currentDogName.toUpperCase());
-        
-        console.log("🔍 Kelly Debug - Looking for dog:", currentDogName);
-        console.log("🔍 Kelly Debug - Found dogObj:", dogObj);
+    if (!winStakeEl) {
+        console.warn("⚠️ Warning: winStakeInput element not found.");
+        return;
+    }
 
-        if (dogObj) {
-            console.log("🔍 Kelly Debug - winProb:", dogObj.winProb);
-            let winDiv = parseFloat(winDivInput ? winDivInput.value : 0) || parseFloat(dogObj.winDiv) || 2.0;
-            let p = (dogObj.winProb || 0) / 100.0; 
-            let q = 1.0 - p;
-            let b = winDiv - 1.0; 
-            
-            console.log("🔍 Kelly Debug - calculated winDiv:", winDiv, "p:", p, "Net Odds b:", b);
+    // Retrieve the base dog object from scored results
+    let dogObj = null;
+    let currentDogName = "";
+    if (window.currentComputedResult && window.currentComputedResult.scoredDogs) {
+        let dogNameEl = document.getElementById('bet-modal-dog-name');
+        currentDogName = dogNameEl ? (dogNameEl.value || dogNameEl.innerText || "") : "";
+        dogObj = window.currentComputedResult.scoredDogs.find(d => d.name && d.name.toUpperCase() === currentDogName.toUpperCase());
+    }
 
-            if (b > 0 && p > 0) {
-                let fullKelly = (b * p - q) / b;
-                let quarterKellyFraction = fullKelly > 0 ? (fullKelly * 0.25) : 0.01;
-                
-                let currentWallet = window.userWalletBalance || (window.userWallet && window.userWallet.balance) || parseFloat(localStorage.getItem('userWalletBalance')) || 1000.0; 
-                let optimalStake = currentWallet * quarterKellyFraction;
-                
-                if (optimalStake < 2.5 && p >= 0.20) {
-                    optimalStake = 5.0; 
-                }
+    let isOddsLocked = oddsLockToggle ? oddsLockToggle.checked : true;
 
-                // --- ROUND TO NEAREST $0.50 ---
-                optimalStake = Math.round(optimalStake * 2) / 2;
-                
-                console.log("🎯 Kelly Debug - Rounded Stake:", optimalStake);
-                winStakeEl.value = optimalStake > 0 ? optimalStake.toFixed(2) : "0.00";
+    let winDiv = 2.0;
+    let placeDiv = 1.5;
 
-                let placeDiv = parseFloat(placeDivEl ? placeDivEl.value : 0) || parseFloat(dogObj.placeDiv) || 0;
-                if (placeStakeEl && optimalStake > 0 && placeDiv > 1.0) {
-                    let calculatedPlaceStake = optimalStake / placeDiv;
-                    // Round to nearest $0.50
-                    calculatedPlaceStake = Math.round(calculatedPlaceStake * 2) / 2;
-                    placeStakeEl.value = calculatedPlaceStake > 0 ? calculatedPlaceStake.toFixed(2) : "0.00";
-                }
-            } else {
-                console.log("⚠️ Kelly Debug - Condition failed: Net odds b or winProb is <= 0");
-            }
+    if (dogObj) {
+        let importedWinOdds = parseFloat(dogObj.winDiv) || parseFloat(dogObj.odds) || parseFloat(dogObj.winOdds) || parseFloat(dogObj.startingWinOdds) || 2.0;
+        let importedPlaceOdds = parseFloat(dogObj.placeDiv) || parseFloat(dogObj.placeOdds) || parseFloat(dogObj.placeReturn) || parseFloat(dogObj.startingPlaceOdds) || 1.5;
+
+        if (isOddsLocked) {
+            winDiv = parseFloat(winDivInput ? winDivInput.value : 0) || importedWinOdds;
+            placeDiv = parseFloat(placeDivInput ? placeDivInput.value : 0) || importedPlaceOdds;
         } else {
-            console.log("❌ Kelly Debug - Dog object could not be found in scoredDogs!");
+            // UNLOCKED: Force reversion
+            winDiv = importedWinOdds;
+            placeDiv = importedPlaceOdds;
+
+            // Push values to inputs and check if elements were found
+            if (winDivInput) {
+                winDivInput.value = winDiv.toFixed(2);
+            } else {
+                console.warn("⚠️ Win odds input field could not be found in DOM!");
+            }
+
+            if (placeDivInput) {
+                placeDivInput.value = placeDiv.toFixed(2);
+            } else {
+                console.warn("⚠️ Place odds input field could not be found in DOM!");
+            }
+            
+            console.log("🔄 Reversion Applied -> Win Field updated to:", winDiv, "| Place Field updated to:", placeDiv);
+        }
+    } else {
+        winDiv = parseFloat(winDivInput ? winDivInput.value : 0) || 2.0;
+        placeDiv = parseFloat(placeDivInput ? placeDivInput.value : 0) || 1.5;
+    }
+
+    // 1. Handle Kelly Win Stake Calculation if active
+    if (isKellyActive && dogObj) {
+        let p = (dogObj.winProb || 0) / 100.0; 
+        let q = 1.0 - p;
+        let b = winDiv - 1.0; 
+        
+        if (b > 0 && p > 0) {
+            let fullKelly = (b * p - q) / b;
+            let quarterKellyFraction = fullKelly > 0 ? (fullKelly * 0.25) : 0.01;
+            
+            let currentWallet = window.userWalletBalance || (window.userWallet && window.userWallet.balance) || parseFloat(localStorage.getItem('userWalletBalance')) || 1000.0; 
+            let optimalStake = currentWallet * quarterKellyFraction;
+            
+            if (optimalStake < 2.5 && p >= 0.20) {
+                optimalStake = 5.0; 
+            }
+
+            optimalStake = Math.round(optimalStake * 2) / 2;
+            winStakeEl.value = optimalStake > 0 ? optimalStake.toFixed(2) : "0.00";
+        } else {
+            winStakeEl.value = "0.00";
         }
     }
 
+    // 2. Read current stakes
     let winStake = winStakeEl ? parseFloat(winStakeEl.value) || 0 : 0;
     let placeStake = placeStakeEl ? parseFloat(placeStakeEl.value) || 0 : 0;
-    let winDiv = winDivEl ? parseFloat(winDivEl.value) || 0 : 0;
-    let placeDiv = placeDivEl ? parseFloat(placeDivEl.value) || 0 : 0;
 
+    // 3. Handle Full Place Hedge Checkbox Logic
+    let isHedgeActive = hedgeToggle ? hedgeToggle.checked : false;
+    if (isHedgeActive && winStake > 0 && placeDiv > 1.0) {
+        let requiredPlaceStake = winStake / (placeDiv - 1.0);
+        requiredPlaceStake = Math.ceil(requiredPlaceStake * 2) / 2; 
+        
+        if (placeStakeEl) {
+            placeStakeEl.value = requiredPlaceStake.toFixed(2);
+            placeStake = requiredPlaceStake; 
+        }
+    }
+
+    // 4. Calculate estimated returns
     let estWinReturn = winStake * winDiv;
     let estPlaceReturn = placeStake * placeDiv;
 
@@ -4618,6 +4891,33 @@ function updateCombinedBetCalculation() {
 
     if (winRetEl) winRetEl.innerText = `$${estWinReturn.toFixed(2)}`;
     if (placeRetEl) placeRetEl.innerText = `$${estPlaceReturn.toFixed(2)}`;
+}
+
+// 4. Optional UI row updater for race cards
+function updateRunnerStakesUI(runnerId, currentBankroll) {
+    const runner = getRunnerData(runnerId); 
+    const probWin = runner.modelWinProbability;     
+    const probPlace = runner.modelPlaceProbability; 
+    const oddsWin = runner.marketOddsWin;           
+    const oddsPlace = runner.marketOddsPlace;       
+
+    const stakeCalculation = calculateProtectedStake(currentBankroll, probWin, probPlace, oddsWin, oddsPlace);
+
+    const winInput = document.getElementById(`stake-win-${runnerId}`);
+    const placeInput = document.getElementById(`stake-place-${runnerId}`);
+    if (winInput) winInput.value = stakeCalculation.stakeWin;
+    if (placeInput) placeInput.value = stakeCalculation.stakePlace;
+    
+    const badge = document.getElementById(`coverage-badge-${runnerId}`);
+    if (badge) {
+        if (stakeCalculation.isFullyCovered) {
+            badge.textContent = "✓ Protected Cover";
+            badge.className = "px-2 py-0.5 text-xs rounded font-semibold bg-emerald-900 text-emerald-300";
+        } else {
+            badge.textContent = "⚠ Partial Cover";
+            badge.className = "px-2 py-0.5 text-xs rounded font-semibold bg-amber-900 text-amber-300";
+        }
+    }
 }
 
 async function confirmAndPlaceBet() {
@@ -4867,11 +5167,8 @@ function resetUserBetFilters() {
 }
 
 function renderBettingTab() {
-    updateWalletDisplay();
+    updateWalletDisplay(); // Keeps global wallet balance updated
     populateUserBetFilterDropdowns();
-
-    // DECLARE A SAFE GLOBAL DEFAULT HERE SO IT CAN NEVER BE UNDEFINED
-    let badgeClass = 'bg-slate-100 text-slate-800 border-slate-300'; 
 
     let trackSelectEl = document.getElementById('filter-user-track-select');
     let dateSelectEl = document.getElementById('filter-user-date-select');
@@ -4912,7 +5209,7 @@ function renderBettingTab() {
         return raceB - raceA;
     };
 
-	let filteredActive = (window.activeBets || []).filter(bet => {
+    let filteredActive = (window.activeBets || []).filter(bet => {
         if (!bet) return false;
         if (!selectedTrack && !selectedDate) return true;
 
@@ -4924,6 +5221,58 @@ function renderBettingTab() {
         return trackMatch && dateMatch;
     });
 
+    let filteredSettled = (window.settledBets || []).filter(bet => {
+        if (!bet) return false;
+        if (!selectedTrack && !selectedDate) return true;
+
+        let betTrack = getCleanTrackName(bet.trackName);
+        let betDate = extractBetDate(bet);
+
+        let trackMatch = !selectedTrack || betTrack === selectedTrack;
+        let dateMatch = !selectedDate || betDate === selectedDate;
+        return trackMatch && dateMatch;
+    });
+
+    // --- DYNAMIC FILTERED PERFORMANCE METRICS CALCULATION ---
+    let netProfit = filteredSettled.reduce((acc, b) => acc + ((b.payout || 0) - (b.stake || 0)), 0);
+    let totalTurnoverSettled = filteredSettled.reduce((acc, b) => acc + (b.stake || 0), 0);
+    let walletRoi = totalTurnoverSettled > 0 ? (netProfit / totalTurnoverSettled) * 100 : 0;
+
+    let totalSettledCount = filteredSettled.length;
+    let winBetsSettled = filteredSettled.filter(b => b.betType === 'Win');
+    let placeBetsSettled = filteredSettled.filter(b => b.betType === 'Place');
+
+    let winHits = winBetsSettled.filter(b => (b.payout || 0) > 0).length;
+    let placeHits = placeBetsSettled.filter(b => (b.payout || 0) > 0).length;
+    let totalWinsHit = filteredSettled.filter(b => (b.payout || 0) > 0).length;
+
+    let winStrike = winBetsSettled.length > 0 ? (winHits / winBetsSettled.length) * 100 : 0;
+    let placeStrike = placeBetsSettled.length > 0 ? (placeHits / placeBetsSettled.length) * 100 : 0;
+    let combinedStrike = totalSettledCount > 0 ? (totalWinsHit / totalSettledCount) * 100 : 0;
+
+    // Update UI Summary Elements with Filtered Results
+    let profitEl = document.getElementById('wallet-profit-display');
+    if (profitEl) {
+        profitEl.innerText = `${netProfit >= 0 ? '+' : ''}$${netProfit.toFixed(2)}`;
+        profitEl.className = `text-xl font-black font-mono ${netProfit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`;
+    }
+
+    let roiEl = document.getElementById('wallet-roi-display');
+    if (roiEl) {
+        roiEl.innerText = `${walletRoi >= 0 ? '+' : ''}${walletRoi.toFixed(1)}%`;
+        roiEl.className = `text-xl font-black font-mono ${walletRoi >= 0 ? 'text-purple-600 dark:text-purple-400' : 'text-red-600 dark:text-red-400'}`;
+    }
+
+    let winStrikeEl = document.getElementById('wallet-win-strike-display');
+    if (winStrikeEl) winStrikeEl.innerText = `${winStrike.toFixed(1)}% (${winHits}/${winBetsSettled.length})`;
+
+    let placeStrikeEl = document.getElementById('wallet-place-strike-display');
+    if (placeStrikeEl) placeStrikeEl.innerText = `${placeStrike.toFixed(1)}% (${placeHits}/${placeBetsSettled.length})`;
+
+    let combinedStrikeEl = document.getElementById('wallet-combined-strike-display');
+    if (combinedStrikeEl) combinedStrikeEl.innerText = `${combinedStrike.toFixed(1)}% (${totalWinsHit}/${totalSettledCount})`;
+
+    // --- RENDER ACTIVE BETS ---
     const activeContainer = document.getElementById('active-bets-container');
     if (activeContainer) {
         if (filteredActive.length === 0) {
@@ -4936,8 +5285,6 @@ function renderBettingTab() {
                 let stake = bet.stake || 0;
                 let odds = bet.odds || 0;
                 let estReturn = bet.estReturn || (stake * odds);
-                
-                // Fixed odds badge check
                 let fixedBadge = bet.isFixedOdds ? `<span class="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50/80 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 border border-amber-100 dark:border-amber-900/30">Fixed</span>` : '';
 
                 html += `
@@ -4963,19 +5310,8 @@ function renderBettingTab() {
         }
     }
 
-let filteredSettled = (window.settledBets || []).filter(bet => {
-        if (!bet) return false;
-        if (!selectedTrack && !selectedDate) return true;
-
-        let betTrack = getCleanTrackName(bet.trackName);
-        let betDate = extractBetDate(bet);
-
-        let trackMatch = !selectedTrack || betTrack === selectedTrack;
-        let dateMatch = !selectedDate || betDate === selectedDate;
-        return trackMatch && dateMatch;
-    });
-
-const settledContainer = document.getElementById('settled-bets-container');
+    // --- RENDER SETTLED BETS ---
+    const settledContainer = document.getElementById('settled-bets-container');
     if (settledContainer) {
         if (filteredSettled.length === 0) {
             settledContainer.innerHTML = `<p class="text-xs text-slate-400 italic">No settled bets match your selected filters.</p>`;
@@ -4984,8 +5320,6 @@ const settledContainer = document.getElementById('settled-bets-container');
             let html = '';
             sortedSettled.forEach((bet) => {
                 let originalSettledIdx = window.settledBets.indexOf(bet);
-                
-                // Declare these variables first so they are fully scoped:
                 let stake = bet.stake || 0;
                 let payout = bet.payout || 0;
                 let profit = payout - stake;
@@ -5380,8 +5714,10 @@ function handleH2HSelection(checkbox) {
     let triggerContainer = document.getElementById('h2h-trigger-container');
     let countSpan = document.getElementById('h2h-count');
     let namesSpan = document.getElementById('h2h-selected-names');
+	let dutchCountSpan = document.getElementById('dutch-count');
 
     if (countSpan) countSpan.textContent = selectedH2HDogs.length;
+	if (dutchCountSpan) dutchCountSpan.textContent = selectedH2HDogs.length;
 
     if (namesSpan) {
         if (selectedH2HDogs.length > 0) {
@@ -5436,7 +5772,7 @@ function openH2HComparisonModal() {
     let targetTrackName = (activeRace.trackName || window.currentTrackName || "").toUpperCase().trim();
     let targetDist = String(activeRace.distance || window.currentDistance || "").trim();
 
-    let columnsHTML = comparedDogs.map((dog, idx) => {
+	let columnsHTML = comparedDogs.map((dog, idx) => {
         let colors = ['text-blue-600', 'text-purple-600', 'text-amber-600'];
         let colorClass = colors[idx % colors.length];
         let highlightClass = "bg-green-100 dark:bg-green-950/60 text-green-800 dark:text-green-200 px-1.5 py-0.5 rounded font-bold";
@@ -5449,50 +5785,53 @@ function openH2HComparisonModal() {
         let earlyVal = parseFloat(dog.avgEarly);
         let gainVal = parseFloat(dog.avgGain);
 
-        // --- FRESH DYNAMIC BOX RECORD CALCULATION ---
         let dogNameUpper = dog.name.toUpperCase();
-        let assignedBoxStr = String(dog.box || "").trim();
 
-        let tdStarts = 0, tdWins = 0, tdPlaces = 0;
-        let globalStarts = 0, globalWins = 0, globalPlaces = 0;
+        // --- CALCULATE GENERAL T&D & OVERALL WINS/PLACES/STARTS ---
+        let genTdStarts = 0, genTdWins = 0, genTdPlaces = 0;
+        let genGlobalStarts = 0, genGlobalWins = 0, genGlobalPlaces = 0;
 
         if (window.dogStats && window.dogStats.length > 0) {
-            let activeDogContext = "";
+            let currentDog = "";
+            let seenStarts = new Set();
+
             window.dogStats.forEach(stat => {
                 let rawName = stat.name ? String(stat.name).trim() : "";
-                if (rawName !== "" && rawName !== '""' && !rawName.startsWith("RACE")) {
-                    if (rawName.includes('.')) {
-                        let parts = rawName.split('.', 2);
-                        activeDogContext = !isNaN(parts[0].trim()) ? parts[1].trim().toUpperCase() : rawName.toUpperCase();
+                if (rawName !== "" && rawName !== '""' && !rawName.startsWith("RACE") && !rawName.startsWith("Dog Name")) {
+                    let clean = rawName.replace(/"/g, '').replace(/^\d+\.\s*/, '').trim().toUpperCase();
+                    if (clean.includes('.')) {
+                        let parts = clean.split('.', 2);
+                        currentDog = !isNaN(parts[0].trim()) ? parts[1].trim() : clean;
                     } else {
-                        activeDogContext = rawName.toUpperCase();
+                        currentDog = clean;
                     }
                 }
 
-                if (activeDogContext === dogNameUpper) {
-                    let statBox = String(stat.box || "").trim();
-                    if (statBox === assignedBoxStr) {
-                        let statTrack = (stat.track || "").toUpperCase().trim();
-                        let statDist = String(stat.distance || stat.dist || "").trim();
-                        let plcNum = parseFloat(stat.plc);
+                if (currentDog === dogNameUpper) {
+                    let raceDate = stat.date || stat.raceDate || "";
+                    let statTrack = (stat.track || "").toUpperCase().trim();
+                    let statDist = String(stat.distance || stat.dist || "").replace(/\D/g, '').trim();
+                    let uniqueRowKey = `${raceDate}_${statTrack}_${statDist}_${stat.plc}_${stat.time}`;
 
+                    if (!seenStarts.has(uniqueRowKey)) {
+                        seenStarts.add(uniqueRowKey);
+
+                        let plcNum = parseFloat(stat.plc);
                         if (!isNaN(plcNum)) {
                             let isWin = (plcNum === 1);
-                            let isPlace = (plcNum >= 2 && plcNum <= 3); // Strictly 2nd or 3rd. Wins DO NOT count as places.
+                            let isPlace = (plcNum >= 2 && plcNum <= 3);
 
-                            // 1. Global Box Record (All starts from assigned box)
-                            globalStarts++;
-                            if (isWin) globalWins++;
-                            if (isPlace) globalPlaces++;
+                            genGlobalStarts++;
+                            if (isWin) genGlobalWins++;
+                            if (isPlace) genGlobalPlaces++;
 
-                            // 2. Track & Distance Box Record
-                            let trackMatch = !targetTrackName || statTrack.includes(targetTrackName) || targetTrackName.includes(statTrack);
-                            let distMatch = !targetDist || statDist === targetDist;
+                            let trackMatches = !targetTrackName || statTrack.includes(targetTrackName) || targetTrackName.includes(statTrack);
+                            let distMatches = !targetDist || statDist === targetDist;
 
-                            if (trackMatch && distMatch) {
-                                tdStarts++;
-                                if (isWin) tdWins++;
-                                if (isPlace) tdPlaces++;
+                            if (trackMatches && distMatches) {
+                                genTdStarts++;
+                                if (isWin) genTdWins++;
+                                if (isPlace) genTdPlaces++;
                             }
                         }
                     }
@@ -5500,15 +5839,14 @@ function openH2HComparisonModal() {
             });
         }
 
-        let tdBoxText = tdStarts > 0 
-            ? `${tdWins} win(s) / ${tdPlaces} place(s) from ${tdStarts} start(s) (T&D)` 
-            : `0 win(s) / 0 place(s) from 0 start(s) (T&D)`;
+// --- OVERALL RECORD (T&D + All) ---
+        let overallRecordDisplay = getOverallRecord(
+            dog.name, 
+            activeRace.trackName, 
+            activeRace.distance || activeRace.raceDistance
+        ).replace('<br>', '<br>- ');
 
-        let globalBoxText = globalStarts > 0 
-            ? `${globalWins} win(s) / ${globalPlaces} place(s) from ${globalStarts} start(s) (All)` 
-            : `0 win(s) / 0 place(s) from 0 start(s) (All)`;
-
-		// --- DIRECT ACCURATE OVERRIDE ---
+        // --- DIRECT ACCURATE BOX RECORD ---
         let accurateBoxRecordText = getForcedAccurateBoxRecord(
             dog.name, 
             dog.box, 
@@ -5528,7 +5866,8 @@ function openH2HComparisonModal() {
                     <li><strong>Avg 1 Sec Split:</strong> <span class="${!isNaN(splitVal) && splitVal === minSplit ? highlightClass : ''}">${dog.avgTrackDistSplit}</span></li>
                     <li><strong>Early Pace:</strong> <span class="${!isNaN(earlyVal) && earlyVal === minEarly ? highlightClass : ''}">${dog.avgEarly}</span></li>
                     <li><strong>Closing Gain:</strong> <span class="${!isNaN(gainVal) && gainVal === maxGain ? highlightClass : ''}">${dog.avgGain}</span></li>
-                    <li><strong>Box Record:</strong><br>${accurateBoxRecordText}</li>
+                    <li><strong>Overall Record:</strong><br>- ${overallRecordDisplay}</li>
+                    <li><strong>Box Record:</strong><br>- ${accurateBoxRecordText}</li>
                 </ul>
             </div>
         `;
@@ -5584,6 +5923,21 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// Automatically attach event listeners on page load to catch toggle changes
+document.addEventListener('DOMContentLoaded', () => {
+    const possibleToggleIds = ['oddsLockToggle', 'fixedRateToggle', 'lockOddsToggle'];
+    
+    possibleToggleIds.forEach(id => {
+        let toggleEl = document.getElementById(id);
+        if (toggleEl) {
+            toggleEl.addEventListener('change', () => {
+                console.log(`🎛️ Toggle [${id}] changed. Updating calculations...`);
+                updateCombinedBetCalculation();
+            });
+        }
+    });
+});
+
 document.addEventListener('DOMContentLoaded', () => {
     let compareBtn = document.getElementById('h2h-compare-btn');
     if (compareBtn) {
@@ -5634,6 +5988,85 @@ function calculateBoxRecordForDog(dogName, assignedBox) {
     return getForcedAccurateBoxRecord(dogName, assignedBox, null, null);
 }
 
+// Helper to normalize track names across abbreviations (e.g. "MT/G" <-> "MOUNT GAMBIER")
+function normalizeTrackName(track) {
+    if (!track) return "";
+    let t = String(track).toUpperCase().trim();
+    if (t.includes("MT/G") || t.includes("MOUNT GAMBIER") || t === "MG") {
+        return "MOUNT GAMBIER";
+    }
+    return t;
+}
+
+// 1. Overall Record (T&D across ANY box + All races)
+function getOverallRecord(dogName, targetTrackName, targetDist) {
+    let cleanName = String(dogName || "").replace(/"/g, '').replace(/^\d+\.\s*/, '').trim().toUpperCase();
+    
+    let tdStarts = 0, tdWins = 0, tdPlaces = 0;
+    let globalStarts = 0, globalWins = 0, globalPlaces = 0;
+
+    let activeRace = (window.allRaceMeetings && window.allRaceMeetings[window.activeRaceKey]) || {};
+    let activeTrackNorm = normalizeTrackName(targetTrackName || activeRace.trackName || window.currentTrackName);
+    let rawActiveDist = targetDist || activeRace.raceDistance || activeRace.distance || window.currentDistance || "";
+    let activeDistNum = String(rawActiveDist).replace(/\D/g, '').trim();
+
+    if (window.dogStats && window.dogStats.length > 0) {
+        let currentDog = "";
+        let seenStarts = new Set();
+
+        window.dogStats.forEach(stat => {
+            let rawName = stat.name ? String(stat.name).trim() : "";
+            
+            if (rawName !== "" && rawName !== '""' && !rawName.startsWith("RACE") && !rawName.startsWith("Dog Name")) {
+                let clean = rawName.replace(/"/g, '').replace(/^\d+\.\s*/, '').trim().toUpperCase();
+                if (clean.includes('.')) {
+                    let parts = clean.split('.', 2);
+                    currentDog = !isNaN(parts[0].trim()) ? parts[1].trim() : clean;
+                } else {
+                    currentDog = clean;
+                }
+            }
+
+            if (currentDog === cleanName) {
+                let raceDate = stat.date || stat.raceDate || "";
+                let statTrackNorm = normalizeTrackName(stat.track);
+                let statDistNum = String(stat.distance || stat.dist || "").replace(/\D/g, '').trim();
+                let uniqueRowKey = `${raceDate}_${statTrackNorm}_${statDistNum}_${stat.plc}_${stat.time}`;
+
+                if (!seenStarts.has(uniqueRowKey)) {
+                    seenStarts.add(uniqueRowKey);
+
+                    let plcNum = parseFloat(stat.plc);
+                    if (!isNaN(plcNum)) {
+                        let isWin = (plcNum === 1);
+                        let isPlace = (plcNum >= 2 && plcNum <= 3);
+
+                        // Global Record (All) - Any track/dist/box
+                        globalStarts++;
+                        if (isWin) globalWins++;
+                        if (isPlace) globalPlaces++;
+
+                        // Track & Distance Match (Any Box)
+                        let trackMatches = !activeTrackNorm || statTrackNorm === activeTrackNorm || statTrackNorm.includes(activeTrackNorm) || activeTrackNorm.includes(statTrackNorm);
+                        let distMatches = !activeDistNum || statDistNum === activeDistNum;
+
+                        if (trackMatches && distMatches) {
+                            tdStarts++;
+                            if (isWin) tdWins++;
+                            if (isPlace) tdPlaces++;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    let tdText = `${tdWins} win(s) / ${tdPlaces} place(s) from ${tdStarts} start(s) (T&D)`;
+    let globalText = `${globalWins} win(s) / ${globalPlaces} place(s) from ${globalStarts} start(s) (All)`;
+    return `${tdText}<br>- ${globalText}`;
+}
+
+// 2. Box Record (Box-specific T&D + Box-specific All)
 function getForcedAccurateBoxRecord(dogName, assignedBox, targetTrackName, targetDist) {
     let cleanName = String(dogName || "").replace(/"/g, '').replace(/^\d+\.\s*/, '').trim().toUpperCase();
     let targetBoxNum = parseInt(assignedBox) || 0;
@@ -5642,12 +6075,13 @@ function getForcedAccurateBoxRecord(dogName, assignedBox, targetTrackName, targe
     let globalStarts = 0, globalWins = 0, globalPlaces = 0;
 
     let activeRace = (window.allRaceMeetings && window.allRaceMeetings[window.activeRaceKey]) || {};
-    let activeTrack = (targetTrackName || activeRace.trackName || "").toUpperCase().trim();
-    let activeDist = String(targetDist || activeRace.raceDistance || "").replace(/\D/g, '').trim();
+    let activeTrackNorm = normalizeTrackName(targetTrackName || activeRace.trackName || window.currentTrackName);
+    let rawActiveDist = targetDist || activeRace.raceDistance || activeRace.distance || window.currentDistance || "";
+    let activeDistNum = String(rawActiveDist).replace(/\D/g, '').trim();
 
     if (window.dogStats && window.dogStats.length > 0) {
         let currentDog = "";
-        let seenStarts = new Set(); // Prevents counting duplicate rows for the same start
+        let seenStarts = new Set();
 
         window.dogStats.forEach(stat => {
             let rawName = stat.name ? String(stat.name).trim() : "";
@@ -5666,11 +6100,10 @@ function getForcedAccurateBoxRecord(dogName, assignedBox, targetTrackName, targe
                 let statBoxNum = parseInt(stat.box) || 0;
                 
                 if (statBoxNum === targetBoxNum && targetBoxNum > 0) {
-                    // Create a unique key for this specific race start using date, track, and distance to avoid duplicates
                     let raceDate = stat.date || stat.raceDate || "";
-                    let statTrack = (stat.track || "").toUpperCase().trim();
-                    let statDist = String(stat.distance || stat.dist || "").replace(/\D/g, '').trim();
-                    let uniqueRowKey = `${raceDate}_${statTrack}_${statDist}_${stat.plc}_${stat.time}`;
+                    let statTrackNorm = normalizeTrackName(stat.track);
+                    let statDistNum = String(stat.distance || stat.dist || "").replace(/\D/g, '').trim();
+                    let uniqueRowKey = `${raceDate}_${statTrackNorm}_${statDistNum}_${stat.plc}_${stat.time}`;
 
                     if (!seenStarts.has(uniqueRowKey)) {
                         seenStarts.add(uniqueRowKey);
@@ -5685,11 +6118,11 @@ function getForcedAccurateBoxRecord(dogName, assignedBox, targetTrackName, targe
                             if (isWin) globalWins++;
                             if (isPlace) globalPlaces++;
 
-                            // Track & Distance Match
-                            let trackMatches = !activeTrack || statTrack.includes(activeTrack) || activeTrack.includes(statTrack);
-                            let distMatches = !activeDist || statDist === activeDist;
+                            // Track & Distance Match for this Box
+                            let trackMatches = !activeTrackNorm || statTrackNorm === activeTrackNorm || statTrackNorm.includes(activeTrackNorm) || activeTrackNorm.includes(statTrackNorm);
+                            let distMatches = !activeDistNum || statDistNum === activeDistNum;
 
-                            if ((!statTrack && !statDist) || (trackMatches && distMatches)) {
+                            if (trackMatches && distMatches) {
                                 tdStarts++;
                                 if (isWin) tdWins++;
                                 if (isPlace) tdPlaces++;
@@ -5704,4 +6137,443 @@ function getForcedAccurateBoxRecord(dogName, assignedBox, targetTrackName, targe
     let tdText = `${tdWins} win(s) / ${tdPlaces} place(s) from ${tdStarts} start(s) (T&D)`;
     let globalText = `${globalWins} win(s) / ${globalPlaces} place(s) from ${globalStarts} start(s) (All)`;
     return `${tdText}<br>- ${globalText}`;
+}
+
+function openDutchingModalFromCheckboxes() {
+    if (typeof selectedH2HDogs !== 'undefined' && selectedH2HDogs.length < 2) {
+        showNotification("Please select at least 2 runners using the checkboxes for dutching.");
+        return;
+    }
+
+    let dogsList = window.currentComputedResult?.scoredDogs || [];
+    let selectedObjects = selectedH2HDogs.map(name => dogsList.find(d => d.name.toUpperCase() === name.toUpperCase())).filter(Boolean);
+
+    if (selectedObjects.length < 2) return;
+
+    // Reset market dropdown to Win by default when opening modal
+    let marketSelect = document.getElementById('dutch-market-type');
+    if (marketSelect) marketSelect.value = 'Win';
+
+    const container = document.getElementById('dutch-runners-container');
+    if (!container) return;
+    
+    let html = '';
+
+    selectedObjects.forEach((dog, idx) => {
+        let defaultWinOdds = dog.winDiv > 0 ? dog.winDiv : 3.0;
+        let defaultPlaceOdds = dog.placeDiv > 0 ? dog.placeDiv : 1.5;
+
+        html += `
+            <div class="dutch-runner-row grid grid-cols-1 sm:grid-cols-4 gap-2 items-center bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-700 text-xs font-mono" data-dog-name="${dog.name}">
+                <div class="sm:col-span-2 font-bold text-slate-900 dark:text-white truncate">
+                    ${idx + 1}. ${dog.name} <span class="text-[10px] text-slate-400 font-normal">(Box ${dog.officialBox || dog.box || '-'})</span>
+                </div>
+                <div>
+                    <label class="block text-[10px] text-slate-400 uppercase font-bold">Odds</label>
+                    <input type="number" step="0.01" value="${defaultWinOdds}" data-win-odds="${defaultWinOdds}" data-place-odds="${defaultPlaceOdds}" oninput="calculateDutchStakes()" class="dutch-odds-input w-full px-2 py-1 border rounded bg-slate-50 dark:bg-slate-800 font-bold">
+                </div>
+                <div>
+                    <label class="block text-[10px] text-slate-400 uppercase font-bold">Stake ($)</label>
+                    <!-- Restored to readonly calculated output -->
+                    <input type="text" readonly class="dutch-stake-output w-full px-2 py-1 border rounded bg-slate-100 dark:bg-slate-800 font-bold text-green-600" value="$0.00">
+                </div>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+    calculateDutchStakes();
+
+    let modal = document.getElementById('dutching-modal');
+    let modalContent = document.getElementById('dutching-modal-content');
+    if (modal && modalContent) {
+        modal.classList.remove('hidden');
+        void modal.offsetWidth;
+        modal.classList.remove('opacity-0');
+        modalContent.classList.remove('scale-95');
+    }
+}
+
+function closeDutchingModal() {
+    let modal = document.getElementById('dutching-modal');
+    let modalContent = document.getElementById('dutching-modal-content');
+    if (modal && modalContent) {
+        modal.classList.add('opacity-0');
+        modalContent.classList.add('scale-95');
+        setTimeout(() => { modal.classList.add('hidden'); }, 300);
+    }
+}
+
+function calculateDutchStakes() {
+    let totalStakeInput = document.getElementById('dutch-total-stake');
+    if (!totalStakeInput) return;
+
+    let totalBudget = parseFloat(totalStakeInput.value) || 0;
+    let rows = document.querySelectorAll('.dutch-runner-row');
+    if (rows.length === 0) return;
+
+    let inverseSum = 0;
+    let runnerData = [];
+
+    rows.forEach(row => {
+        let oddsInput = row.querySelector('.dutch-odds-input');
+        let winOdds = parseFloat(oddsInput.getAttribute('data-win-odds')) || 3.0;
+
+        if (!oddsInput.value) {
+            oddsInput.value = winOdds > 0 ? winOdds : 3.0;
+        }
+
+        let currentOdds = parseFloat(oddsInput.value) || winOdds;
+
+        if (currentOdds > 1.0) {
+            inverseSum += (1.0 / currentOdds);
+            runnerData.push({ row, odds: currentOdds });
+        }
+    });
+
+    let totalStakedActual = 0;
+    let targetReturn = inverseSum > 0 ? (totalBudget / inverseSum) : 0;
+
+    runnerData.forEach(item => {
+        let exactStake = item.odds > 0 ? (targetReturn / item.odds) : 0;
+        let roundedStake = Math.round(exactStake * 2) / 2; // Round to nearest $0.50
+        totalStakedActual += roundedStake;
+
+        let stakeOut = item.row.querySelector('.dutch-stake-output');
+        if (stakeOut) {
+            stakeOut.value = `$${roundedStake.toFixed(2)}`;
+        }
+        item.roundedStake = roundedStake;
+    });
+
+    let guaranteedReturn = runnerData.length > 0 && runnerData[0].odds > 0 ? runnerData[0].roundedStake * runnerData[0].odds : 0;
+    let netProfit = guaranteedReturn - totalStakedActual;
+    let roiPct = totalStakedActual > 0 ? (netProfit / totalStakedActual) * 100 : 0;
+
+    let stakedLbl = document.getElementById('dutch-lbl-total-staked');
+    let returnLbl = document.getElementById('dutch-lbl-target-return');
+    let profitEl = document.getElementById('dutch-lbl-profit');
+
+    if (stakedLbl) stakedLbl.innerText = `$${totalStakedActual.toFixed(2)}`;
+    if (returnLbl) returnLbl.innerText = `$${guaranteedReturn.toFixed(2)}`;
+    
+    if (profitEl) {
+        profitEl.innerText = `${netProfit >= 0 ? '+' : ''}$${netProfit.toFixed(2)} (${roiPct.toFixed(1)}%)`;
+        profitEl.className = netProfit >= 0 ? "font-mono font-bold text-green-600 dark:text-green-400" : "font-mono font-bold text-red-600 dark:text-red-400";
+    }
+}
+
+async function confirmAndPlaceDutchBets() {
+    let rows = document.querySelectorAll('.dutch-runner-row');
+    let totalStakeNeeded = 0;
+    let betsToPlace = [];
+
+    rows.forEach(row => {
+        let dogName = row.getAttribute('data-dog-name');
+        let oddsInput = row.querySelector('.dutch-odds-input');
+        let odds = parseFloat(oddsInput.value) || 3.0;
+        let stakeStr = row.querySelector('.dutch-stake-output').value;
+        let stake = parseFloat(stakeStr.replace('$', '')) || 0;
+
+        if (stake > 0) {
+            totalStakeNeeded += stake;
+            betsToPlace.push({ dogName, stake, odds, marketType: 'Win' });
+        }
+    });
+
+    if (totalStakeNeeded <= 0) {
+        showNotification("Stakes must be greater than zero.");
+        return;
+    }
+
+    if (!window.userWallet) window.userWallet = { balance: 0.00, staked: 0.00, profit: 0.00, transactions: [] };
+    if (totalStakeNeeded > window.userWallet.balance) {
+        showNotification("Insufficient wallet balance for this dutching portfolio.");
+        return;
+    }
+
+    window.userWallet.balance -= totalStakeNeeded;
+    window.userWallet.staked += totalStakeNeeded;
+    let timestampStr = new Date().toLocaleString();
+    let activeRace = window.allRaceMeetings[window.activeRaceKey] || {};
+    let trackName = activeRace.trackName || "Unknown Track";
+
+    betsToPlace.forEach(b => {
+        window.activeBets.push({
+            id: Date.now() + Math.random(),
+            dogName: b.dogName,
+            trackName: trackName,
+            raceNum: activeRace.raceNumber || "1",
+            betType: b.marketType,
+            stake: b.stake,
+            odds: b.odds,
+            estReturn: b.stake * b.odds,
+            isFixedOdds: true,
+            timestamp: timestampStr,
+            status: 'active'
+        });
+
+        window.userWallet.transactions.unshift({
+            id: Date.now() + Math.random(),
+            type: 'Bet Stake',
+            description: `Dutch Win: ${b.dogName} (${trackName})`,
+            amount: -b.stake,
+            balanceAfter: window.userWallet.balance,
+            timestamp: timestampStr
+        });
+    });
+
+    closeDutchingModal();
+    await sortAndPersistMeetingsObject();
+    updateWalletDisplay();
+    renderBettingTab();
+    renderTransactionHistory();
+    showNotification(`Successfully placed ${betsToPlace.length} dutching wagers totaling $${totalStakeNeeded.toFixed(2)}!`, "success");
+}
+
+function clearDutchSelections() {
+    // Uncheck all active H2H / Dutch checkboxes on the page
+    document.querySelectorAll('.h2h-checkbox').forEach(cb => cb.checked = false);
+    
+    // Clear the selected array
+    selectedH2HDogs = [];
+
+    // Update counter elements across the UI
+    let countSpan = document.getElementById('h2h-count');
+    let dutchCountSpan = document.getElementById('dutch-count');
+    let namesSpan = document.getElementById('h2h-selected-names');
+    let triggerContainer = document.getElementById('h2h-trigger-container');
+
+    if (countSpan) countSpan.textContent = '0';
+    if (dutchCountSpan) dutchCountSpan.textContent = '0';
+    if (namesSpan) namesSpan.textContent = '';
+    if (triggerContainer) triggerContainer.classList.add('hidden');
+
+    // Close the modal
+    closeDutchingModal();
+    showNotification("Cleared all selected dogs.");
+}
+
+function toggleOddsLockInputs() {
+    let oddsLockToggle = document.getElementById('oddsLockToggle');
+    let container = document.getElementById('fixedOddsInputsContainer');
+    
+    if (oddsLockToggle && container) {
+        if (oddsLockToggle.checked) {
+            // If checked (locked), show the custom fixed odds input fields
+            container.classList.remove('hidden');
+        } else {
+            // If unchecked (unlocked/reverted), hide the manual inputs
+            container.classList.add('hidden');
+        }
+    }
+    // Run your calculation update as well
+    updateCombinedBetCalculation();
+}
+
+function recalculateDutchingTotals() {
+    let stakeInputs = document.querySelectorAll('.dutching-stake-input');
+    let totalOutlay = 0;
+    let minReturn = Infinity;
+
+    stakeInputs.forEach(input => {
+        let stake = parseFloat(input.value) || 0;
+        totalOutlay += stake;
+
+        // Find the odds element in the same row
+        let row = input.closest('.dutching-row');
+        let oddsEl = row ? row.querySelector('.dutching-odds') : null;
+        let odds = oddsEl ? (parseFloat(oddsEl.innerText) || 0) : 0;
+
+        let potentialReturn = stake * odds;
+        if (potentialReturn < minReturn && potentialReturn > 0) {
+            minReturn = potentialReturn;
+        }
+    });
+
+    if (minReturn === Infinity) minReturn = 0;
+    let estimatedProfit = minReturn - totalOutlay;
+    let roi = totalOutlay > 0 ? (estimatedProfit / totalOutlay) * 100 : 0;
+
+    // Update summary UI elements safely
+    let totalOutlayEl = document.getElementById('dutching-total-outlay');
+    let estReturnEl = document.getElementById('dutching-est-return');
+    let profitEl = document.getElementById('dutching-est-profit');
+
+    if (totalOutlayEl) totalOutlayEl.innerText = `$${totalOutlay.toFixed(2)}`;
+    if (estReturnEl) estReturnEl.innerText = `$${minReturn.toFixed(2)}`;
+    if (profitEl) {
+        profitEl.innerText = `$${estimatedProfit.toFixed(2)} (${roi.toFixed(1)}%)`;
+        profitEl.className = estimatedProfit >= 0 ? "font-mono font-bold text-green-600 dark:text-green-400" : "font-mono font-bold text-red-600 dark:text-red-400";
+    }
+}
+
+function openDutchingModal(selectedRunners) {
+    let container = document.getElementById('dutching-runners-container');
+    if (!container) return;
+
+    container.innerHTML = ""; // Clear list
+
+    selectedRunners.forEach(runner => {
+        let initialStake = runner.defaultStake || 10.00; 
+
+        container.innerHTML += `
+            <div class="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 mb-2 dutching-row">
+                <div class="flex-1">
+                    <span class="font-bold text-slate-900 dark:text-white text-xs">${runner.name}</span>
+                    <span class="block text-[10px] text-slate-500">Odds: <span class="dutching-odds">${runner.winDiv || runner.odds}</span></span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 pl-2 flex items-center text-xs text-slate-400">$</span>
+                        <input type="number" step="0.5" min="0" value="${initialStake.toFixed(2)}" 
+                               oninput="recalculateDutchingTotals()" 
+                               class="dutching-stake-input w-20 text-xs pl-5 pr-2 py-1 border rounded bg-white dark:bg-slate-900 font-mono font-bold focus:outline-none">
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
+    recalculateDutchingTotals();
+
+    // --- ADD IT HERE: Force-unlock all stake inputs right after rendering ---
+    document.querySelectorAll('.dutching-stake-input').forEach(input => {
+        input.disabled = false;
+        input.readOnly = false;
+        input.style.pointerEvents = 'auto';
+    });
+
+    // Show your modal element here...
+}
+
+// Render or Refresh the Dutching Runners List with Editable Inputs
+function renderDutchingRunnersList(runners) {
+    // Target the container holding your selected runners list
+    let container = document.getElementById('dutching-runners-container') || document.querySelector('.dutching-runners-list');
+    if (!container) {
+        console.warn("⚠️ Dutching runners container not found in DOM.");
+        return;
+    }
+
+    container.innerHTML = ""; // Clear existing rows once
+
+    runners.forEach((runner, index) => {
+        let runnerName = runner.name || runner.dogName || `Runner ${index + 1}`;
+        let odds = parseFloat(runner.winDiv || runner.odds || runner.fixedWin) || 2.0;
+        let defaultStake = runner.stake || 10.00;
+
+        // Create the row element explicitly
+        let rowDiv = document.createElement('div');
+        rowDiv.className = "flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 mb-2 dutching-row";
+        
+        rowDiv.innerHTML = `
+            <div class="flex-1">
+                <span class="font-bold text-slate-900 dark:text-white text-xs">${index + 1}. ${runnerName.toUpperCase()}</span>
+                <span class="block text-[11px] text-slate-500 mt-0.5">Odds: <span class="dutching-odds font-mono font-bold">${odds.toFixed(2)}</span></span>
+            </div>
+            <div class="flex items-center gap-2">
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 pl-2.5 flex items-center text-xs text-slate-400 font-bold">$</span>
+                    <input type="number" step="0.5" min="0" value="${defaultStake.toFixed(2)}" 
+                           oninput="recalculateDutchingTotals()" 
+                           class="dutching-stake-input w-24 text-xs pl-6 pr-2 py-1.5 border rounded bg-white dark:bg-slate-900 font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+            </div>
+        `;
+
+        container.appendChild(rowDiv);
+    });
+
+    // Run initial calculation
+    recalculateDutchingTotals();
+}
+// Enhanced Analytical Engine with Dynamic Weighting and Bias Correction
+function processAdvancedProbabilityAndValue(options = {}) {
+    if (!window.currentComputedResult || !window.currentComputedResult.scoredDogs) {
+        console.warn("⚠️ No scored dogs found for advanced probability processing.");
+        return;
+    }
+
+    let dogs = window.currentComputedResult.scoredDogs;
+    let sumInverseOdds = 0;
+
+    // --- STEP A: OVERROUND (BOOKMAKER MARGIN) NORMALIZATION ---
+    dogs.forEach(dog => {
+        let odds = parseFloat(dog.winDiv || dog.odds || dog.winOdds) || 2.0;
+        dog._activeOdds = odds > 1.0 ? odds : 2.0;
+        
+        // Raw implied probability from bookmaker odds
+        dog._rawImplied = 1.0 / dog._activeOdds;
+        sumInverseOdds += dog._rawImplied;
+    });
+
+    let overroundPct = sumInverseOdds * 100;
+    window.currentComputedResult.bookmakerOverround = overroundPct;
+
+    let currentWallet = window.userWalletBalance || (window.userWallet && window.userWallet.balance) || parseFloat(localStorage.getItem('userWalletBalance')) || 1000.0;
+
+    dogs.forEach(dog => {
+        // 1. True Normalized Market Probability (0.0 to 1.0 scale)
+        let trueMarketProb = sumInverseOdds > 0 ? (dog._rawImplied / sumInverseOdds) : 0;
+        
+        // --- FAVORITE-LONGSHOT BIAS CORRECTION ---
+        // Adjust market probability slightly to counteract public over-betting of favorites
+        if (dog._activeOdds < 2.5) {
+            trueMarketProb *= 0.95; // Slightly discount short favorites
+        } else if (dog._activeOdds > 8.0) {
+            trueMarketProb *= 1.08; // Boost longshots to account for market under-pricing
+        }
+
+        dog.normalizedMarketProb = trueMarketProb * 100;
+
+        // 2. Model Probability
+        let modelProb = (parseFloat(dog.winProb) || 0) / 100.0;
+
+        // 3. DYNAMIC BAYESIAN WEIGHTING BASED ON PRICE TIER
+        // Trust the model more on longshots/value runners; trust market more on short favorites
+        let wModel = 0.65;
+        let wMarket = 0.35;
+        if (dog._activeOdds > 5.0) {
+            wModel = 0.75; // Heavy model weight for outsiders
+            wMarket = 0.25;
+        } else if (dog._activeOdds <= 2.0) {
+            wModel = 0.55; // Heavy market weight for strong favorites
+            wMarket = 0.45;
+        }
+
+        // Blended Probability
+        let blendedProb = (wModel * modelProb) + (wMarket * trueMarketProb);
+        dog.blendedWinProb = blendedProb * 100;
+
+        // 4. Expected Value (EV) Edge
+        let evMultiplier = blendedProb * dog._activeOdds;
+        dog.evEdge = (evMultiplier - 1.0) * 100;
+        dog.isPositiveValue = dog.evEdge > 0;
+
+        // 5. Variance-Adjusted Quarter-Kelly Staking
+        let p = blendedProb;
+        let q = 1.0 - p;
+        let b = dog._activeOdds - 1.0;
+
+        let fullKelly = b > 0 ? (b * p - q) / b : 0;
+        
+        // Scale down Kelly multiplier for high-odds runners to manage bankroll drawdown volatility
+        let volatilityFactor = dog._activeOdds > 6.0 ? 0.5 : 1.0;
+        let quarterKellyFraction = fullKelly > 0 ? (fullKelly * 0.25 * volatilityFactor) : 0.01;
+
+        dog.kellyFraction = quarterKellyFraction;
+
+        let optimalStake = currentWallet * quarterKellyFraction;
+        if (optimalStake < 2.5 && p >= 0.20) {
+            optimalStake = 5.0;
+        }
+
+        dog.suggestedKellyStake = Math.round(optimalStake * 2) / 2;
+    });
+
+    // Rank and sort dogs by highest EV Edge
+    dogs.sort((a, b) => b.evEdge - a.evEdge);
+
+    console.log(`🚀 Enhanced Probability Engine Executed | Overround: ${overroundPct.toFixed(1)}% | Dynamic Weights Applied`);
 }
