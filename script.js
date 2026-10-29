@@ -3039,19 +3039,29 @@ function renderWinProbabilitiesMeter() {
     let winningNameEl = document.getElementById('winning-dog-name');
     if (winningNameEl) winningNameEl.innerText = `${scoredDogs[0].name} ${topSexIcon}`;
 
-    // --- SEAMLESS DOM REORDERING FOR RUNNER CARDS ---
+    // --- SEAMLESS DOM REORDERING FOR ACTIVE RUNNERS (KEEPING SCRATCHED AT BOTTOM) ---
     let analysisList = document.getElementById('runner-analysis-list');
     if (analysisList) {
+        let scratchedHeader = analysisList.querySelector('h4');
+        let scratchedCards = Array.from(analysisList.children).filter(li => {
+            let text = li.innerText || "";
+            return text.toUpperCase().includes('SCRATCHED');
+        });
+
         scoredDogs.forEach(dog => {
-            // Find each dog's existing card in the DOM by its name or data attribute
             let card = Array.from(analysisList.children).find(li => {
                 let text = li.innerText || "";
-                return text.toUpperCase().includes(dog.name.toUpperCase());
+                return text.toUpperCase().includes(dog.name.toUpperCase()) && !text.toUpperCase().includes('SCRATCHED');
             });
             if (card) {
-                analysisList.appendChild(card); // Moves the existing card element to the bottom of the list in the exact new sorted order
+                analysisList.appendChild(card);
             }
         });
+
+        if (scratchedHeader && scratchedHeader.innerText.toUpperCase().includes('SCRATCHED')) {
+            analysisList.appendChild(scratchedHeader);
+        }
+        scratchedCards.forEach(card => analysisList.appendChild(card));
     }
 }
 
