@@ -316,18 +316,41 @@ function applyPreset(presetType) {
 
     // 5. Clear manual order lock so the new preset scores sort automatically
 	if (window.currentComputedResult) {
-			window.currentComputedResult.isManuallyOrdered = false;
-		}
-    // 6. Force the UI to re-render instantly with the newly sorted list based on the new preset scores
-    if (typeof renderWinProbabilitiesMeter === 'function') {
-        renderWinProbabilitiesMeter();
+        window.currentComputedResult.isManuallyOrdered = false;
     }
 
-    // Re-enable normal slider event handling after a brief moment
-    setTimeout(() => {
+    // 6. Force the UI to re-render smoothly via requestAnimationFrame
+    requestAnimationFrame(() => {
+        if (typeof renderWinProbabilitiesMeter === 'function') {
+            renderWinProbabilitiesMeter();
+        }
+        if (typeof renderBatchSummaryDashboard === 'function') {
+            renderBatchSummaryDashboard();
+        }
+        // Re-enable normal slider event handling after the render settles
         window.isApplyingPreset = false;
-    }, 100);
+    });
 }
+
+// --- GLOBAL EVENT DELEGATION FOR SMOOTH RACE & MEETING CLICKS ---
+document.addEventListener('click', (e) => {
+    const targetCard = e.target.closest('[data-race-key], .batch-summary-card');
+    if (!targetCard) return;
+
+    const raceKey = targetCard.getAttribute('data-race-key') || targetCard.dataset.raceKey;
+    if (!raceKey) return;
+
+    // Defer heavy calculations and DOM updates to keep the click lightning-fast
+    requestAnimationFrame(() => {
+        window.activeRaceKey = raceKey;
+        if (typeof refreshPredictions === 'function') {
+            refreshPredictions();
+        }
+        if (typeof renderBatchSummaryDashboard === 'function') {
+            renderBatchSummaryDashboard();
+        }
+    });
+});
 
 async function clearPredictionCache() {
     if (confirm("Are you sure you want to force-clear the computed analysis cache?")) {
@@ -638,11 +661,11 @@ async function sortAndPersistMeetingsObject() {
     window.activeBets = Array.isArray(window.activeBets) ? window.activeBets : [];
     window.settledBets = Array.isArray(window.settledBets) ? window.settledBets : [];
 
-    const snapshotPayload = {
+	const snapshotPayload = {
         meetings: window.allRaceMeetings,
         activeKey: window.activeRaceKey,
         stats: window.dogStats,
-        cache: window.computedPredictionsCache,
+        // OMIT 'cache' from Firestore payload to prevent exceeding the 1 MB document size limit
         savedPredictions: window.savedPredictions,
         customPresets: window.customPresets,
         userWallet: window.userWallet,
@@ -1341,16 +1364,18 @@ function getRacePillStatus(key) {
     let isSettled = window.savedPredictions.some(item => {
         let trackMatch = (item.trackName || "").toUpperCase().includes(raceObj.trackName.toUpperCase()) || raceObj.trackName.toUpperCase().includes((item.trackName || "").toUpperCase());
         let raceNumMatch = String(item.raceNumber || "") === String(raceObj.raceNumber || "") || new RegExp(`\\bRACE\\s*${raceObj.raceNumber}\\b`, 'i').test(item.trackName || "");
-        
         let dateMatch = (!item.raceDate || !raceObj.raceDate) ? true : item.raceDate === raceObj.raceDate;
-
         let hasWinner = item.actualWinner && item.actualWinner.trim() !== "";
-        
         return trackMatch && raceNumMatch && dateMatch && hasWinner;
     });
 
     if (isSettled) return 'settled';
-    if (window.computedPredictionsCache[key]) return 'computed';
+    
+    // STRICTLY check if this specific race was explicitly analyzed and persisted
+    if (raceObj.isAnalyzed) {
+        return 'computed';
+    }
+    
     return 'neutral';
 }
 
@@ -1762,46 +1787,57 @@ function renderBatchSummaryDashboard() {
         return;
     }
 
-    // Build all card markup in-memory first to eliminate DOM thrashing
     let cardsHtml = '';
     
-    filteredKeys.forEach(key => {
+filteredKeys.forEach(key => {
         let race = window.allRaceMeetings[key];
         let topPick = "Pending Stats";
         let confidence = "-";
         let confBadgeClass = "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300";
 
-        let runnerCount = 0;
-        if (race.dogs && Array.isArray(race.dogs) && race.dogs.length > 0) {
-            runnerCount = race.dogs.length;
+		let runnerCount = 0;
+        if (race.starters && Array.isArray(race.starters) && race.starters.length > 0) {
+            // Filter out scratched dogs and vacant boxes
+            runnerCount = race.starters.filter(s => !s.scratched && !s.starterName.toUpperCase().includes('VACANT')).length;
+        } else if (race.dogs && Array.isArray(race.dogs) && race.dogs.length > 0) {
+            runnerCount = race.dogs.filter(d => !d.scratched && !d.name.toUpperCase().includes('VACANT')).length;
         } else if (race.runners && Array.isArray(race.runners) && race.runners.length > 0) {
-            runnerCount = race.runners.length;
-        } else if (race.dogList && Array.isArray(race.dogList) && race.dogList.length > 0) {
-            runnerCount = race.dogList.length;
+            runnerCount = race.runners.filter(r => !r.scratched && !r.name.toUpperCase().includes('VACANT')).length;
         }
 
-        // Use prediction cache or compute once per race
-        if (window.dogStats && window.dogStats.length > 0) {
-            let computed = null;
-            if (window.computedPredictionsCache && window.computedPredictionsCache[key]) {
-                computed = window.computedPredictionsCache[key];
-            } else if (typeof computeRacePredictionData === 'function') {
-                computed = computeRacePredictionData(race);
-                if (computed) {
-                    window.computedPredictionsCache[key] = computed;
-                }
+        // Always compute or retrieve prediction data so cards show top picks immediately
+		let computed = null;
+        if (window.computedPredictionsCache && typeof window.computedPredictionsCache[key] === 'object' && window.computedPredictionsCache[key] !== null) {
+            computed = window.computedPredictionsCache[key];
+        } else if (race.computedResult) {
+            computed = race.computedResult;
+        } else if (typeof computeRacePredictionData === 'function' && runnerCount > 0) {
+            computed = computeRacePredictionData(race);
+            if (computed && computed.scoredDogs && computed.scoredDogs.length > 0) {
+                if (!window.computedPredictionsCache) window.computedPredictionsCache = {};
+                window.computedPredictionsCache[key] = computed;
             }
+        }
 
-            if (computed) {
-                if (runnerCount === 0 && computed.scoredDogs && computed.scoredDogs.length > 0) {
-                    runnerCount = computed.scoredDogs.length;
-                }
-                if (computed.scoredDogs && computed.scoredDogs.length > 0) {
-                    topPick = computed.scoredDogs[0].name;
-                    confidence = computed.confidenceText || "-";
-                    confBadgeClass = computed.confidenceBadgeClass || confBadgeClass;
-                }
-            }
+        if (computed && computed.scoredDogs && computed.scoredDogs.length > 0) {
+            let sortedScoredDogs = [...computed.scoredDogs].sort((a, b) => {
+                let probA = parseFloat(a.blendedWinProb !== undefined ? a.blendedWinProb : (a.winProb || a.softmaxProb || 0));
+                let probB = parseFloat(b.blendedWinProb !== undefined ? b.blendedWinProb : (b.winProb || b.softmaxProb || 0));
+                return probB - probA;
+            });
+
+            topPick = sortedScoredDogs[0].name;
+            confidence = computed.confidenceText || "Moderate";
+            confBadgeClass = computed.confidenceBadgeClass || "bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300";
+        } else {
+            // Fallback: If historical stats aren't loaded for this track yet, show first starter name if available
+            let fallbackStarters = race.starters || race.dogs || race.runners || race.dogList;
+            if (fallbackStarters && fallbackStarters.length > 0) {
+                let firstDog = fallbackStarters[0];
+                topPick = typeof firstDog === 'string' ? firstDog : (firstDog.name || "Ready to Analyze");
+                confidence = "Awaiting Stats";
+                confBadgeClass = "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300";
+			}
         }
 
         let cleanDate = race.raceDate || "No Date";
@@ -2441,6 +2477,27 @@ function getPrioritizedAvgSplit(pastRaces, targetTrack, targetDistance) {
 
 // --- 2. YOUR PREDICTION FUNCTION ---
 function computeRacePredictionData(activeRace) {
+    // 1. Determine the correct stats source: global dogStats or race-embedded starters/dogs
+    let effectiveDogStats = window.dogStats;
+    if ((!effectiveDogStats || effectiveDogStats.length === 0) && activeRace) {
+        if (activeRace.starters && Array.isArray(activeRace.starters) && activeRace.starters.length > 0) {
+            effectiveDogStats = activeRace.starters;
+        } else if (activeRace.dogs && Array.isArray(activeRace.dogs) && activeRace.dogs.length > 0) {
+            effectiveDogStats = activeRace.dogs;
+        } else if (activeRace.runners && Array.isArray(activeRace.runners) && activeRace.runners.length > 0) {
+            effectiveDogStats = activeRace.runners;
+        }
+    }
+
+    if (!effectiveDogStats || effectiveDogStats.length === 0) {
+        return {
+            scoredDogs: [],
+            scratchedDogs: [],
+            confidenceText: "Low",
+            confidenceBadgeClass: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+        };
+    }
+
     let targetDist = activeRace.raceDistance ? activeRace.raceDistance.replace('m', '').trim() : "";
     let targetDistNum = parseFloat(targetDist) || 0;
     let targetTrack = activeRace.trackName ? activeRace.trackName.toUpperCase().trim() : "";
@@ -2467,7 +2524,7 @@ function computeRacePredictionData(activeRace) {
     }
 
     let allTrackDistTimes = [];
-    window.dogStats.forEach(stat => {
+    effectiveDogStats.forEach(stat => {
         let statDist = stat.dist ? stat.dist.trim() : "";
         let statDistNum = parseFloat(statDist) || 0;
         let statTrack = stat.track ? stat.track.toUpperCase().trim() : "";
@@ -2484,7 +2541,7 @@ function computeRacePredictionData(activeRace) {
     let activeDogName = "";
 
     // --- UNIFORM NAME CLEANING & INHERITANCE ---
-    window.dogStats.forEach(stat => {
+    effectiveDogStats.forEach(stat => {
         let rawName = stat.name ? String(stat.name).trim() : "";
         
         if (rawName !== "" && rawName !== '""' && !rawName.startsWith("RACE") && !rawName.startsWith("Dog Name")) {
@@ -3007,6 +3064,18 @@ return {
     };
 } // <-- Closes computeRacePredictionData
 
+// Inside your prediction calculation / refresh function:
+if (window.activeRaceKey && window.allRaceMeetings[window.activeRaceKey]) {
+    window.allRaceMeetings[window.activeRaceKey].isAnalyzed = true;
+    
+    // Automatically trigger your save function so it syncs to IndexedDB & Firebase
+    if (typeof sortAndPersistMeetingsObject === 'function') {
+        sortAndPersistMeetingsObject();
+    }
+}
+
+// Then use 'statusIcon' in your HTML generation for the button/icon
+
 // Independent rendering function placed safely outside
 function renderWinProbabilitiesTab(scoredDogs) {
     let sortedDogs = [...scoredDogs];
@@ -3285,7 +3354,14 @@ async function refreshPredictions(showNotif = true) {
     let scoredDogs = computed.scoredDogs;
 
     if (scoredDogs.length > 0) {
-        window.computedPredictionsCache[window.activeRaceKey] = true;
+        // STORE THE FULL COMPUTED OBJECT IN CACHE (Fixes Meeting Summary cards)
+        window.computedPredictionsCache[window.activeRaceKey] = computed;
+
+        // TAG RACE AS ANALYZED SO STATUS PERSISTS ACROSS REFRESHES
+        if (window.allRaceMeetings[window.activeRaceKey]) {
+            window.allRaceMeetings[window.activeRaceKey].isAnalyzed = true;
+        }
+
         await sortAndPersistMeetingsObject();
         updateAllUIComponents();
 
