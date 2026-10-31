@@ -291,6 +291,13 @@ function applyPreset(presetType) {
         showNotification("Applied Distance Preset: Loaded from customized settings.", "success");
     }
 
+    // 1. Prevent slider change listeners from triggering duplicate calculations
+    window.isApplyingPreset = true;
+
+    // 2. Assign the weights to your active configuration
+    window.customModelWeights = weights;
+
+    // 3. Update the slider UI elements so they match the preset visually
     for (let k in weights) {
         let el = document.getElementById(`w-${k}`);
         let valEl = document.getElementById(`val-w-${k}`);
@@ -300,9 +307,26 @@ function applyPreset(presetType) {
         }
     }
 
-    if (window.currentComputedResult) {
-        refreshPredictions();		
+    // 4. Run calculation & refresh FIRST so new scores are computed
+    if (typeof refreshPredictions === 'function') {
+        refreshPredictions();
+    } else if (typeof computeRacePredictionData === 'function' && typeof activeRace !== 'undefined') {
+        window.currentComputedResult = computeRacePredictionData(activeRace);
     }
+
+    // 5. Clear manual order lock so the new preset scores sort automatically
+	if (window.currentComputedResult) {
+			window.currentComputedResult.isManuallyOrdered = false;
+		}
+    // 6. Force the UI to re-render instantly with the newly sorted list based on the new preset scores
+    if (typeof renderWinProbabilitiesMeter === 'function') {
+        renderWinProbabilitiesMeter();
+    }
+
+    // Re-enable normal slider event handling after a brief moment
+    setTimeout(() => {
+        window.isApplyingPreset = false;
+    }, 100);
 }
 
 async function clearPredictionCache() {
@@ -672,19 +696,16 @@ function updateAllUIComponents() {
 }
 
 function openTab(evt, tabName) {
-    // Hide all elements with class="tab-content"
     let tabcontent = document.getElementsByClassName("tab-content");
     for (let i = 0; i < tabcontent.length; i++) {
         tabcontent[i].style.display = "none";
     }
 
-    // Remove the class "active" from all tab links/buttons
     let tablinks = document.getElementsByClassName("tablink");
     for (let i = 0; i < tablinks.length; i++) {
         tablinks[i].className = tablinks[i].className.replace(" active", "");
     }
 
-    // Show the specific tab content, and add an "active" class to the button that opened the tab
     let targetTab = document.getElementById(tabName);
     if (targetTab) {
         targetTab.style.display = "block";
@@ -693,16 +714,17 @@ function openTab(evt, tabName) {
         evt.currentTarget.className += " active";
     }
 
-    // --- ADD THIS BLOCK ---
-    if (tabName === 'saved-predictions-tab' || tabName === 'saved-tab') {
-        populateSavedFilterDropdowns();
-        renderSavedPredictions();
-    } else if (tabName === 'batch-summary-tab') {
-        renderBatchSummaryDashboard();
-    } else if (tabName === 'betting-tab') {
-        renderBettingTab();
-    }
-    // ----------------------
+    // Use setTimeout to yield the main thread so the UI doesn't freeze
+    setTimeout(() => {
+        if (tabName === 'saved-predictions-tab' || tabName === 'saved-tab') {
+            if (typeof populateSavedFilterDropdowns === 'function') populateSavedFilterDropdowns();
+            if (typeof renderSavedPredictions === 'function') renderSavedPredictions();
+        } else if (tabName === 'batch-summary-tab') {
+            if (typeof renderBatchSummaryDashboard === 'function') renderBatchSummaryDashboard();
+        } else if (tabName === 'betting-tab') {
+            if (typeof renderBettingTab === 'function') renderBettingTab();
+        }
+    }, 10);
 }
 
 function showNotification(message, type = "error") {
@@ -1715,6 +1737,8 @@ function renderBatchSummaryDashboard() {
     const gridContainer = document.getElementById('batch-cards-grid');
     let sortedKeys = getSortedRaceKeys();
 
+    if (!gridContainer) return;
+
     if (sortedKeys.length === 0) {
         gridContainer.innerHTML = `<div class="col-span-full p-8 text-center text-slate-400 italic">No race meetings imported yet. Please upload TXT meeting files.</div>`;
         return;
@@ -1728,12 +1752,8 @@ function renderBatchSummaryDashboard() {
         let trackName = (race.trackName || "").toUpperCase();
         let raceDate = (race.raceDate || "").toUpperCase();
 
-        if (selectedTrack && !trackName.includes(selectedTrack)) {
-            return false;
-        }
-        if (selectedDate && !raceDate.includes(selectedDate)) {
-            return false;
-        }
+        if (selectedTrack && !trackName.includes(selectedTrack)) return false;
+        if (selectedDate && !raceDate.includes(selectedDate)) return false;
         return true;
     });
 
@@ -1742,34 +1762,45 @@ function renderBatchSummaryDashboard() {
         return;
     }
 
-    gridContainer.innerHTML = '';
+    // Build all card markup in-memory first to eliminate DOM thrashing
+    let cardsHtml = '';
+    
     filteredKeys.forEach(key => {
         let race = window.allRaceMeetings[key];
         let topPick = "Pending Stats";
         let confidence = "-";
         let confBadgeClass = "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300";
 
-        // --- NEW: Calculate total runners for this specific race ---
-		let runnerCount = 0;
+        let runnerCount = 0;
         if (race.dogs && Array.isArray(race.dogs) && race.dogs.length > 0) {
             runnerCount = race.dogs.length;
         } else if (race.runners && Array.isArray(race.runners) && race.runners.length > 0) {
             runnerCount = race.runners.length;
         } else if (race.dogList && Array.isArray(race.dogList) && race.dogList.length > 0) {
             runnerCount = race.dogList.length;
-        } else if (window.dogStats && window.dogStats.length > 0) {
-            let computed = computeRacePredictionData(race);
-            if (computed && computed.scoredDogs && computed.scoredDogs.length > 0) {
-                runnerCount = computed.scoredDogs.length;
-            }
         }
 
+        // Use prediction cache or compute once per race
         if (window.dogStats && window.dogStats.length > 0) {
-            let computed = computeRacePredictionData(race);
-            if (computed && computed.scoredDogs.length > 0) {
-                topPick = computed.scoredDogs[0].name;
-                confidence = computed.confidenceText;
-                confBadgeClass = computed.confidenceBadgeClass;
+            let computed = null;
+            if (window.computedPredictionsCache && window.computedPredictionsCache[key]) {
+                computed = window.computedPredictionsCache[key];
+            } else if (typeof computeRacePredictionData === 'function') {
+                computed = computeRacePredictionData(race);
+                if (computed) {
+                    window.computedPredictionsCache[key] = computed;
+                }
+            }
+
+            if (computed) {
+                if (runnerCount === 0 && computed.scoredDogs && computed.scoredDogs.length > 0) {
+                    runnerCount = computed.scoredDogs.length;
+                }
+                if (computed.scoredDogs && computed.scoredDogs.length > 0) {
+                    topPick = computed.scoredDogs[0].name;
+                    confidence = computed.confidenceText || "-";
+                    confBadgeClass = computed.confidenceBadgeClass || confBadgeClass;
+                }
             }
         }
 
@@ -1778,38 +1809,41 @@ function renderBatchSummaryDashboard() {
             cleanDate = `${cleanDate.slice(0,2)}/${cleanDate.slice(2,4)}/${cleanDate.slice(4,8)}`;
         }
 
-        const card = document.createElement('div');
-        card.className = "bg-slate-50 dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm hover:border-slate-400 cursor-pointer transition-colors flex flex-col justify-between";
-        card.onclick = function() {
-            switchActiveRace(key);
-            document.querySelectorAll("button.tab-btn")[3].click();
-        };
-        card.innerHTML = `
-            <div>
-                <div class="flex flex-col mb-2 pb-2 border-b border-slate-200 dark:border-slate-700">
-                    <div class="flex justify-between items-center">
-                        <span class="text-xs font-black uppercase text-slate-900 dark:text-white tracking-wide">${race.trackName || 'UNKNOWN'}</span>
-                        <div class="flex items-center gap-1.5">
-                            <!-- NEW: Runner count badge -->
-                            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-bold">${runnerCount} Runners</span>
-                            <span class="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">Race ${race.raceNumber || '?'}</span>
+        cardsHtml += `
+            <div class="bg-slate-50 dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm hover:border-slate-400 cursor-pointer transition-colors flex flex-col justify-between" onclick="window.handleBatchCardClick('${key}')">
+                <div>
+                    <div class="flex flex-col mb-2 pb-2 border-b border-slate-200 dark:border-slate-700">
+                        <div class="flex justify-between items-center">
+                            <span class="text-xs font-black uppercase text-slate-900 dark:text-white tracking-wide">${race.trackName || 'UNKNOWN'}</span>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-bold">${runnerCount} Runners</span>
+                                <span class="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">Race ${race.raceNumber || '?'}</span>
+                            </div>
+                        </div>
+                        <div class="flex justify-between items-center mt-1">
+                            <span class="text-[11px] text-slate-500 dark:text-slate-400 font-mono">📅 ${cleanDate}</span>
+                            <span class="text-[10px] font-mono text-slate-500 dark:text-slate-400">${race.raceDistance ? '📏 ' + race.raceDistance : ''}</span>
                         </div>
                     </div>
-                    <div class="flex justify-between items-center mt-1">
-                        <span class="text-[11px] text-slate-500 dark:text-slate-400 font-mono">📅 ${cleanDate}</span>
-                        <span class="text-[10px] font-mono text-slate-500 dark:text-slate-400">${race.raceDistance ? '📏 ' + race.raceDistance : ''}</span>
-                    </div>
+                    <div class="text-sm font-black text-slate-900 dark:text-white mb-3">🥇 ${topPick}</div>
                 </div>
-                <div class="text-sm font-black text-slate-900 dark:text-white mb-3">🥇 ${topPick}</div>
-            </div>
-            <div class="flex justify-between items-center pt-2 border-t border-slate-200 dark:border-slate-700">
-                <span class="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Confidence</span>
-                <span class="text-[10px] px-2 py-0.5 rounded font-bold ${confBadgeClass}">${confidence}</span>
+                <div class="flex justify-between items-center pt-2 border-t border-slate-200 dark:border-slate-700">
+                    <span class="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Confidence</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded font-bold ${confBadgeClass}">${confidence}</span>
+                </div>
             </div>
         `;
-        gridContainer.appendChild(card);
     });
+
+    gridContainer.innerHTML = cardsHtml;
 }
+
+// Global click helper to support the optimized inline string markup cleanly
+window.handleBatchCardClick = function(key) {
+    if (typeof switchActiveRace === 'function') switchActiveRace(key);
+    let tabButtons = document.querySelectorAll("button.tab-btn");
+    if (tabButtons[3]) tabButtons[3].click();
+};
 
 async function clearActiveMeetingsData() {
     if (Object.keys(window.allRaceMeetings).length === 0) {
@@ -2445,7 +2479,7 @@ function computeRacePredictionData(activeRace) {
     allTrackDistTimes.sort((a, b) => a - b);
     let trackMedianStandard = allTrackDistTimes.length > 0 ? allTrackDistTimes[Math.floor(allTrackDistTimes.length / 2)] : 30.0;
 
-	let dogAverages = {};
+    let dogAverages = {};
     let rawDogRecords = {};
     let activeDogName = "";
 
@@ -2455,7 +2489,7 @@ function computeRacePredictionData(activeRace) {
         
         if (rawName !== "" && rawName !== '""' && !rawName.startsWith("RACE") && !rawName.startsWith("Dog Name")) {
             let clean = rawName.replace(/"/g, '').trim();
-            clean = clean.replace(/^\d+\.\s*/, ''); // Strip leading number and dot
+            clean = clean.replace(/^\d+\.\s*/, ''); 
             if (clean.includes('.')) {
                 let parts = clean.split('.', 2);
                 activeDogName = !isNaN(parts[0].trim()) ? parts[1].trim().toUpperCase() : clean.toUpperCase();
@@ -2538,38 +2572,19 @@ function computeRacePredictionData(activeRace) {
             let split1 = parseFloat(stat.split1);
             let statDist = stat.dist ? stat.dist.trim() : "";
             let statDistNum = parseFloat(statDist) || 0;
-            let statTrack = stat.track ? stat.track.toUpperCase().trim() : "";
+            let statTrack = stat.track ? stat.track.toUpperCase().trim() : ""; // <-- ADDED HERE
             let statBox = String(stat.box || "").trim();
             let pirParsed = parsePir(stat.pir);
 
-			statBox = String(stat.box || "").trim();
             let statBoxNum = parseInt(statBox) || 0;
-
             if (statBoxNum > 0) {
                 let boxKey = String(statBoxNum);
-                
-                if (!dogAverages[name].boxStats[boxKey]) {
-                    dogAverages[name].boxStats[boxKey] = { starts: 0, wins: 0, places: 0 };
-                }
-                dogAverages[name].boxStats[boxKey].starts += 1;
-                
-                if (!isNaN(plc)) {
-                    if (plc === 1) {
-                        dogAverages[name].boxStats[boxKey].wins += 1;
-                    } else if (plc >= 2 && plc <= 3) {
-                        dogAverages[name].boxStats[boxKey].places += 1; // STRICT: 2nd or 3rd only
-                    }
+                if (dogAverages[name].boxStats && dogAverages[name].boxStats[boxKey]) {
+                    let bInfo = dogAverages[name].boxStats[boxKey];
+                    let actualWins = bInfo.wins || 0;
+                    let actualPlaces = bInfo.places || 0;
                 }
             }
-
-let boxKey = String(parseInt(statBox) || 0);
-if (dogAverages[name].boxStats[boxKey]) {
-    let bInfo = dogAverages[name].boxStats[boxKey];
-    let actualWins = bInfo.wins || 0;
-    let actualPlaces = bInfo.places || 0;
-
-    boxRecordText = `${actualWins} win(s) / ${actualPlaces} place(s) from ${bInfo.starts} start(s) in Box ${boxKey}`;
-}
 
             if (!isNaN(plc)) {
                 dogAverages[name].totalPlc += plc;
@@ -2680,10 +2695,10 @@ if (dogAverages[name].boxStats[boxKey]) {
         starterEarlyMap[boxNum] = { name: name, earlyPace: earlyPaceVal };
     });
 
-	let scoredDogs = activeStarters.map(starter => {
+    let scoredDogs = activeStarters.map(starter => {
         let rawStarterName = starter.starterName ? String(starter.starterName).trim() : "";
         let cleanStarter = rawStarterName.replace(/"/g, '').trim();
-        cleanStarter = cleanStarter.replace(/^\d+\.\s*/, ''); // Strip leading number and dot
+        cleanStarter = cleanStarter.replace(/^\d+\.\s*/, ''); 
         let name = cleanStarter.toUpperCase();
 
         let assignedBox = String(starter.box || "1").trim();
@@ -2692,7 +2707,6 @@ if (dogAverages[name].boxStats[boxKey]) {
 
         let splitResult = getPrioritizedAvgSplit(pastRaces, targetTrack, targetDistNum);
 
-        // Assigned safely without duplicate declarations
         let avg1SecVal = splitResult.avgSplit !== null ? splitResult.avgSplit : 6.5;
         let splitMatchType = splitResult.matchType;
         
@@ -2753,7 +2767,6 @@ if (dogAverages[name].boxStats[boxKey]) {
             let normalizedAvgTime = avgTimeVal + trackSpeedVariant;
             variantDifferential = normalizedAvgTime - trackBenchmark;
 
-            // Set display best 1sec using the prioritized result metadata or fallbacks
             if (dStats.normBest1Sec !== 999) {
                 displayBest1Sec = dStats.normBest1Sec.toFixed(2);
             }
@@ -2765,14 +2778,20 @@ if (dogAverages[name].boxStats[boxKey]) {
                 recencyText = `Extended layoff (${daysSinceLastRun} days): Fitness uncertainty penalty applied`;
             }
 
-if (dStats.boxStats[assignedBox]) {
+            if (dStats.boxStats && dStats.boxStats[assignedBox]) {
                 let bInfo = dStats.boxStats[assignedBox];
-                
                 let actualWins = bInfo.wins || 0;
                 let actualPlaces = Math.max(0, (bInfo.places || 0) - actualWins);
 
-                // --- OVERRIDE WITH ACCURATE BOX RECORD ---
-				boxRecordText = getForcedAccurateBoxRecord(name, assignedBox, activeRace.trackName, activeRace.distance || activeRace.raceDistance).replace('<br>', '<br>- ');
+                if (typeof getForcedAccurateBoxRecord === 'function') {
+                    let exactBoxRecord = getForcedAccurateBoxRecord(
+                        name, 
+                        assignedBox, 
+                        activeRace.trackName, 
+                        activeRace.distance || activeRace.raceDistance
+                    );
+                    boxRecordText = exactBoxRecord.replace('<br>', '<br>- ');        
+                }
                 
                 let winStrikeRate = bInfo.starts > 0 ? (actualWins / bInfo.starts) : 0;
                 let placeStrikeRate = bInfo.starts > 0 ? (actualPlaces / bInfo.starts) : 0;
@@ -2851,16 +2870,17 @@ if (dStats.boxStats[assignedBox]) {
                     trafficPenalty - 
                     recencyAdjustment;
 
-		// --- FINAL OVERRIDE FOR CARDS & MODAL ---
-        let exactBoxRecord = getForcedAccurateBoxRecord(
-            name, 
-            assignedBox, 
-            activeRace.trackName, 
-            activeRace.distance || activeRace.raceDistance
-        );
-        boxRecordText = exactBoxRecord.replace('<br>', '<br>- ');        
-		
-		return {
+        if (typeof getForcedAccurateBoxRecord === 'function') {
+            let exactBoxRecord = getForcedAccurateBoxRecord(
+                name, 
+                assignedBox, 
+                activeRace.trackName, 
+                activeRace.distance || activeRace.raceDistance
+            );
+            boxRecordText = exactBoxRecord.replace('<br>', '<br>- ');        
+        }
+        
+        return {
             name: starter.starterName,
             box: assignedBox,
             officialBox: starter.officialBox || assignedBox,
@@ -2883,25 +2903,30 @@ if (dStats.boxStats[assignedBox]) {
             trafficReason: trafficReason,
             recencyText: recencyText,
             score: score,
-            expectedValuePercent: 0 
+            expectedValuePercent: 0,
+            winProb: 0,
+            softmaxProb: 0
         };
     });
 
+    // --- SORT SCORED DOGS BY SCORE ---
     scoredDogs.sort((a, b) => a.score - b.score);
 
     let databaseBestScore = scoredDogs.length > 0 ? scoredDogs[0].score : 0;
     let databaseWorstScore = scoredDogs.length > 0 ? scoredDogs[scoredDogs.length - 1].score : 100;
 
-    window.savedPredictions.forEach(savedItem => {
-        if (savedItem.scoredDogs && Array.isArray(savedItem.scoredDogs)) {
-            savedItem.scoredDogs.forEach(d => {
-                if (d.score !== undefined && !isNaN(d.score)) {
-                    if (d.score < databaseBestScore) databaseBestScore = d.score;
-                    if (d.score > databaseWorstScore) databaseWorstScore = d.score;
-                }
-            });
-        }
-    });
+    if (window.savedPredictions && Array.isArray(window.savedPredictions)) {
+        window.savedPredictions.forEach(savedItem => {
+            if (savedItem.scoredDogs && Array.isArray(savedItem.scoredDogs)) {
+                savedItem.scoredDogs.forEach(d => {
+                    if (d.score !== undefined && !isNaN(d.score)) {
+                        if (d.score < databaseBestScore) databaseBestScore = d.score;
+                        if (d.score > databaseWorstScore) databaseWorstScore = d.score;
+                    }
+                });
+            }
+        });
+    }
 
     let dbScoreRange = databaseWorstScore - databaseBestScore;
 
@@ -2932,6 +2957,7 @@ if (dStats.boxStats[assignedBox]) {
     scoredDogs.forEach((dog, idx) => {
         let softmaxProb = sumSoftmax > 0 ? (softmaxExps[idx] / sumSoftmax) * 100 : (100 / scoredDogs.length);
         let marketImpliedProb = sumMarketImplied > 0 ? (rawImpliedProbs[idx] / sumMarketImplied) * 100 : softmaxProb;
+        dog.softmaxProb = softmaxProb; // Store individual softmax probability
         dog.winProb = (softmaxProb * 0.65) + (marketImpliedProb * 0.35);
     });
 
@@ -2950,6 +2976,15 @@ if (dStats.boxStats[assignedBox]) {
         });        
     }
 
+    // --- NEW: SORT WIN PROBABILITIES IN DESCENDING ORDER (LARGEST TO SMALLEST) ---
+scoredDogs.sort((a, b) => {
+    let probA = parseFloat(a.blendedWinProb !== undefined ? a.blendedWinProb : (a.winProb || a.softmaxProb || 0));
+    let probB = parseFloat(b.blendedWinProb !== undefined ? b.blendedWinProb : (b.winProb || b.softmaxProb || 0));
+    return probB - probA; // Always largest to smallest
+});;
+	
+	console.log("🚀 Enhanced Probability Engine Executed | Overround: ...");
+
     let confidenceText = "Medium";
     let confidenceBadgeClass = "bg-yellow-50 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-200 border border-yellow-200 dark:border-yellow-700";
     if (scoredDogs.length >= 2) {
@@ -2963,47 +2998,107 @@ if (dStats.boxStats[assignedBox]) {
         }
     }
 
-    return { 
+return { 
         scoredDogs, 
         confidenceText, 
         confidenceBadgeClass, 
+        isManuallyOrdered: false, // Ensures fresh loads start un-manually ordered
         scratchedDogs: activeRace.starters.filter(s => s.scratched === true && !s.starterName.includes('VACANT')) 
     };
+} // <-- Closes computeRacePredictionData
+
+// Independent rendering function placed safely outside
+function renderWinProbabilitiesTab(scoredDogs) {
+    let sortedDogs = [...scoredDogs];
+
+    // Respect manual ordering if active, otherwise sort descending by blendedWinProb
+    if (!window.currentComputedResult || !window.currentComputedResult.isManuallyOrdered) {
+        sortedDogs.sort((a, b) => {
+            let probA = parseFloat(a.blendedWinProb !== undefined ? a.blendedWinProb : (a.winProb || a.softmaxProb || 0));
+            let probB = parseFloat(b.blendedWinProb !== undefined ? b.blendedWinProb : (b.winProb || b.softmaxProb || 0));
+            return probB - probA; 
+        });
+    }
+
+    let cardsHtml = sortedDogs.map((dog, index) => {
+        let prob = parseFloat(dog.blendedWinProb !== undefined ? dog.blendedWinProb : (dog.winProb || 0)).toFixed(1);
+        return `
+            <div class="runner-card p-3 mb-2 rounded bg-slate-800 text-white">
+                <div class="flex justify-between items-center">
+                    <span>${index + 1}. ${dog.name} (B${dog.box})</span>
+                    <span>${prob}%</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    let container = document.getElementById('win-probabilities-container');
+    if (container) {
+        container.innerHTML = cardsHtml;
+    }
 }
 
 // Swap runner ranks manually in the current computed result
 function movePredictionRank(index, direction) {
     if (!window.currentComputedResult || !window.currentComputedResult.scoredDogs) return;
-    let dogs = window.currentComputedResult.scoredDogs;
     
+    let scoredDogs = window.currentComputedResult.scoredDogs;
     let targetIndex = index + direction;
-    if (targetIndex < 0 || targetIndex >= dogs.length) return;
 
-    // Swap positions
-    let temp = dogs[index];
-    dogs[index] = dogs[targetIndex];
-    dogs[targetIndex] = temp;
+    // Boundary check
+    if (targetIndex < 0 || targetIndex >= scoredDogs.length) return;
 
-    // Flag as manually ordered
+    // Swap the dogs in the array
+    let temp = scoredDogs[index];
+    scoredDogs[index] = scoredDogs[targetIndex];
+    scoredDogs[targetIndex] = temp;
+
+    // CRITICAL: Lock manual ordering so auto-sort doesn't immediately revert the swap
     window.currentComputedResult.isManuallyOrdered = true;
+    window.currentComputedResult.scoredDogs = scoredDogs;
 
-    // Directly re-render the win probabilities container and top pick without recalculating model scores
-    renderWinProbabilitiesMeter();
+    // Re-render the meter and tabs using the manual order
+    if (typeof renderWinProbabilitiesMeter === 'function') {
+        renderWinProbabilitiesMeter();
+    }
+    if (typeof renderWinProbabilitiesTab === 'function') {
+        renderWinProbabilitiesTab(scoredDogs);
+    }
 }
 
 function renderWinProbabilitiesMeter() {
+    if (window.isApplyingPreset) return;
     if (!window.currentComputedResult || !window.currentComputedResult.scoredDogs) return;
-    let scoredDogs = window.currentComputedResult.scoredDogs;
+    
+    // DEBUG: Let's inspect what data the UI is actually receiving
+    console.log("Rendering dogs order:", window.currentComputedResult.scoredDogs.map(d => `${d.name}: ${d.blendedWinProb || d.winProb}`.trim()));
+
+    let scoredDogs = [...window.currentComputedResult.scoredDogs];
+
+    // ONLY auto-sort if the user hasn't manually moved the runners around!
+    if (!window.currentComputedResult.isManuallyOrdered) {
+        scoredDogs.sort((a, b) => {
+            let probA = parseFloat(a.blendedWinProb !== undefined ? a.blendedWinProb : (a.winProb || a.softmaxProb || 0));
+            let probB = parseFloat(b.blendedWinProb !== undefined ? b.blendedWinProb : (b.winProb || b.softmaxProb || 0));
+            return probB - probA; // Highest percentage always comes first automatically
+        });
+        window.currentComputedResult.scoredDogs = scoredDogs;
+    }
 
     let container = document.getElementById('probability-win-meter-container');
     if (!container) return;
 
     let meterHtml = '';
     scoredDogs.forEach((dog, idx) => {
-        let colorClass = idx === 0 ? 'text-green-600 dark:text-green-400 font-black' : (idx === 1 ? 'text-yellow-600 dark:text-yellow-400 font-bold' : 'text-slate-700 dark:text-slate-300 font-medium');
-        let barColor = idx === 0 ? 'bg-green-500' : (idx === 1 ? 'bg-yellow-400' : 'bg-slate-400 dark:bg-slate-600');
+        // Ensure we explicitly use the correct sorted index for coloring and ranking
+        let rank = idx + 1;
+        let colorClass = rank === 1 ? 'text-green-600 dark:text-green-400 font-black' : (rank === 2 ? 'text-yellow-600 dark:text-yellow-400 font-bold' : 'text-slate-700 dark:text-slate-300 font-medium');
+        let barColor = rank === 1 ? 'bg-green-500' : (rank === 2 ? 'bg-yellow-400' : 'bg-slate-400 dark:bg-slate-600');
         let sexIcon = dog.sex === 'Dog' ? '🐶' : (dog.sex === 'Bitch' ? '🐾' : '');
-        let probVal = (dog.winProb || 0).toFixed(1);
+        
+        // Pull the exact blended win probability
+        let rawProb = dog.blendedWinProb !== undefined ? dog.blendedWinProb : (dog.winProb || dog.softmaxProb || 0);
+        let probVal = parseFloat(rawProb).toFixed(1);
 
         let manualControls = `
             <div class="flex items-center gap-1 ml-2 inline-flex">
@@ -3016,7 +3111,7 @@ function renderWinProbabilitiesMeter() {
             <div class="space-y-1 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
                 <div class="flex justify-between items-center text-sm">
                     <div class="flex items-center gap-1">
-                        <span class="${colorClass}">${idx + 1}. ${dog.name} ${sexIcon} <span class="text-xs font-mono text-slate-400">(B${dog.officialBox || dog.box})</span></span>
+                        <span class="${colorClass}">${rank}. ${dog.name} ${sexIcon} <span class="text-xs font-mono text-slate-400">(B${dog.officialBox || dog.box})</span></span>
                         ${manualControls}
                     </div>
                     <span class="font-mono font-bold text-xs">${probVal}%</span>
@@ -3032,14 +3127,20 @@ function renderWinProbabilitiesMeter() {
         meterHtml += `<div class="mt-2 text-right"><button onclick="resetPredictionManualOrder()" class="text-[11px] text-purple-600 dark:text-purple-400 font-bold hover:underline cursor-pointer">🔄 Reset Manual Order</button></div>`;
     }
 
+    // DEBUG: Log the correct top dog directly from scoredDogs[0]
+    if (scoredDogs.length > 0) {
+        let topProb = (scoredDogs[0].blendedWinProb !== undefined ? scoredDogs[0].blendedWinProb : (scoredDogs[0].winProb || 0)).toFixed(1);
+        console.log("Injected HTML for #1 dog:", scoredDogs[0].name, topProb);
+    }
+
     container.innerHTML = meterHtml;
 
-    // Update top pick header instantly
+
     let topSexIcon = scoredDogs[0].sex === 'Dog' ? '🐶' : (scoredDogs[0].sex === 'Bitch' ? '🐾' : '');
     let winningNameEl = document.getElementById('winning-dog-name');
     if (winningNameEl) winningNameEl.innerText = `${scoredDogs[0].name} ${topSexIcon}`;
 
-    // --- SEAMLESS DOM REORDERING FOR ACTIVE RUNNERS (KEEPING SCRATCHED AT BOTTOM) ---
+    // --- SEAMLESS DOM REORDERING FOR ACTIVE RUNNERS ---
     let analysisList = document.getElementById('runner-analysis-list');
     if (analysisList) {
         let scratchedHeader = analysisList.querySelector('h4');
@@ -3143,6 +3244,34 @@ function renderRunnerAnalysisList() {
     }
 }
 
+let analysisHtml = ""; 
+
+    if (window.currentComputedResult?.scratchedDogs && window.currentComputedResult.scratchedDogs.length > 0) {
+        analysisHtml += `<h4 class="font-bold text-pink-700 uppercase tracking-wider text-xs mt-6 mb-2">Scratched Runners</h4>`;
+        window.currentComputedResult.scratchedDogs.forEach(dog => {
+            let sexBadge = dog.sex === 'Dog' ? '🐶' : (dog.sex === 'Bitch' ? '🐾' : '');
+            analysisHtml += `
+                <li class="bg-pink-50 dark:bg-pink-950/40 p-3 border border-pink-200 dark:border-pink-800 rounded-lg shadow-sm text-pink-900 dark:text-pink-200 flex justify-between items-center mb-2">
+                    <div><strong class="font-bold">${dog.starterName}</strong> ${sexBadge} <span class="text-xs text-pink-600 font-mono">(Box ${dog.officialBox || dog.box})</span></div>
+                    <span class="bg-pink-200 dark:bg-pink-800 text-pink-800 dark:text-pink-200 border border-pink-300 dark:border-pink-700 text-xs px-2 py-1 rounded shadow-sm font-bold uppercase">Scratched</span>
+                </li>
+            `;
+        });
+    }
+
+    let listContainer = document.getElementById('runner-analysis-list');
+    if (listContainer) {
+        listContainer.innerHTML = analysisHtml;
+        // Re-bind click listeners for modal details
+        document.querySelectorAll('.dog-name-click').forEach(el => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                let encodedName = e.currentTarget.getAttribute('data-dog-name');
+                if (typeof openScoreBreakdownModal === 'function') openScoreBreakdownModal(encodedName);
+            });
+        });
+    }
+
 async function refreshPredictions(showNotif = true) {
     if (!window.activeRaceKey || !window.allRaceMeetings[window.activeRaceKey] || !window.dogStats || window.dogStats.length === 0) {
         if (showNotif) {
@@ -3217,11 +3346,22 @@ async function refreshPredictions(showNotif = true) {
         document.getElementById('confidence-indicator-container').innerHTML = confBadgeHTML;
 
 		let meterHtml = '';
-        scoredDogs.forEach((dog, idx) => {
-            let colorClass = idx === 0 ? 'text-green-600 dark:text-green-400 font-black' : (idx === 1 ? 'text-yellow-600 dark:text-yellow-400 font-bold' : 'text-slate-700 dark:text-slate-300 font-medium');
-            let barColor = idx === 0 ? 'bg-green-500' : (idx === 1 ? 'bg-yellow-400' : 'bg-slate-400 dark:bg-slate-600');
-            let sexIcon = dog.sex === 'Dog' ? '🐶' : (dog.sex === 'Bitch' ? '🐾' : '');
-            let probVal = (dog.winProb || 0).toFixed(1);
+    
+    // Sort descending by blendedWinProb so the UI matches the engine's correct order
+    scoredDogs.sort((a, b) => {
+        let probA = parseFloat(a.blendedWinProb !== undefined ? a.blendedWinProb : (a.winProb || a.softmaxProb || 0));
+        let probB = parseFloat(b.blendedWinProb !== undefined ? b.blendedWinProb : (b.winProb || b.softmaxProb || 0));
+        return probB - probA;
+    });
+
+    scoredDogs.forEach((dog, idx) => {
+        let colorClass = idx === 0 ? 'text-green-600 dark:text-green-400 font-black' : (idx === 1 ? 'text-yellow-600 dark:text-yellow-400 font-bold' : 'text-slate-700 dark:text-slate-300 font-medium');
+        let barColor = idx === 0 ? 'bg-green-500' : (idx === 1 ? 'bg-yellow-400' : 'bg-slate-400 dark:bg-slate-600');
+        let sexIcon = dog.sex === 'Dog' ? '🐶' : (dog.sex === 'Bitch' ? '🐾' : '');
+        
+        // Use blendedWinProb as the primary probability display
+        let rawProb = dog.blendedWinProb !== undefined ? dog.blendedWinProb : (dog.winProb || 0);
+        let probVal = parseFloat(rawProb).toFixed(1);
 
             let manualControls = `
                 <div class="flex items-center gap-1 ml-2 inline-flex">
@@ -3246,9 +3386,13 @@ async function refreshPredictions(showNotif = true) {
             `;
         });
 
-        if (window.currentComputedResult.isManuallyOrdered) {
-            meterHtml += `<div class="mt-2 text-right"><button onclick="resetPredictionManualOrder()" class="text-[11px] text-purple-600 dark:text-purple-400 font-bold hover:underline cursor-pointer">🔄 Reset Manual Order</button></div>`;
-        }
+		if (!window.currentComputedResult || !window.currentComputedResult.isManuallyOrdered) {
+				scoredDogs.sort((a, b) => {
+					let probA = parseFloat(a.blendedWinProb !== undefined ? a.blendedWinProb : (a.winProb || a.softmaxProb || 0));
+					let probB = parseFloat(b.blendedWinProb !== undefined ? b.blendedWinProb : (b.winProb || b.softmaxProb || 0));
+					return probB - probA;
+				});
+			}
 
         document.getElementById('probability-win-meter-container').innerHTML = meterHtml;
 
@@ -4720,12 +4864,15 @@ async function resetWalletData() {
     let fixedToggle = document.getElementById('fixedOddsToggle');
     let fixedContainer = document.getElementById('fixedOddsInputsContainer');
 
+	let hedgeToggle = document.getElementById('hedgePlaceToggle');
+
     if (winStakeEl) winStakeEl.value = "";
     if (placeStakeEl) placeStakeEl.value = "";
     if (fixedWinEl) fixedWinEl.value = winDiv > 0 ? winDiv : "";
     if (fixedPlaceEl) fixedPlaceEl.value = placeDiv > 0 ? placeDiv : "";
     if (fixedToggle) fixedToggle.checked = false;
     if (fixedContainer) fixedContainer.classList.add('hidden');
+	if (hedgeToggle) hedgeToggle.checked = false;
 
     updateCombinedBetCalculation();
 
@@ -4795,7 +4942,7 @@ function updateCombinedBetCalculation() {
                         document.getElementById('bet-modal-placediv') || 
                         document.getElementById('placeOddsInput');
 
-    let oddsLockToggle = document.getElementById('oddsLockToggle') || 
+	let oddsLockToggle = document.getElementById('oddsLockToggle') || 
                          document.getElementById('fixedRateToggle') || 
                          document.getElementById('lockOddsToggle');
                          
@@ -4815,7 +4962,8 @@ function updateCombinedBetCalculation() {
         dogObj = window.currentComputedResult.scoredDogs.find(d => d.name && d.name.toUpperCase() === currentDogName.toUpperCase());
     }
 
-    let isOddsLocked = oddsLockToggle ? oddsLockToggle.checked : true;
+    // Default to false (unlocked / dynamic pool) if toggle is not found or unchecked
+    let isOddsLocked = oddsLockToggle ? oddsLockToggle.checked : false;
 
     let winDiv = 2.0;
     let placeDiv = 1.5;
@@ -4941,12 +5089,17 @@ async function confirmAndPlaceBet() {
     
     let winStake = parseFloat(document.getElementById('winStakeInput')?.value) || 0;
     let placeStake = parseFloat(document.getElementById('placeStakeInput')?.value) || 0;
-    let winDiv = parseFloat(document.getElementById('bet-modal-windiv')?.value) || 0;
-    let placeDiv = parseFloat(document.getElementById('bet-modal-placediv')?.value) || 0;
+    
+    // Default pool dividends from hidden runner profile inputs
+    let defaultWinDiv = parseFloat(document.getElementById('bet-modal-windiv')?.value) || 0;
+    let defaultPlaceDiv = parseFloat(document.getElementById('bet-modal-placediv')?.value) || 0;
 
-    let isFixed = document.getElementById('fixedOddsToggle')?.checked || false;
-    let fixedWinOdds = isFixed ? parseFloat(document.getElementById('fixedWinOddsInput')?.value) || winDiv : winDiv;
-    let fixedPlaceOdds = isFixed ? parseFloat(document.getElementById('fixedPlaceOddsInput')?.value) || placeDiv : placeDiv;
+    // Check fixed odds toggle state (using your exact id: 'oddsLockToggle')
+    let isFixed = document.getElementById('oddsLockToggle')?.checked || false;
+    
+    // Capture locked custom odds or fall back to default pool dividends
+    let fixedWinOdds = isFixed ? (parseFloat(document.getElementById('fixedWinOddsInput')?.value) || defaultWinDiv) : defaultWinDiv;
+    let fixedPlaceOdds = isFixed ? (parseFloat(document.getElementById('fixedPlaceOddsInput')?.value) || defaultPlaceDiv) : defaultPlaceDiv;
 
     let totalStakeNeeded = winStake + placeStake;
 
@@ -4977,9 +5130,9 @@ async function confirmAndPlaceBet() {
             raceNum: raceNum,
             betType: 'Win',
             stake: winStake,
-            odds: fixedWinOdds,
+            odds: fixedWinOdds,               
             estReturn: winStake * fixedWinOdds,
-            isFixedOdds: isFixed,
+            isFixedOdds: isFixed,             
             fixedOdds: isFixed ? fixedWinOdds : null,
             timestamp: timestampStr,
             status: 'active'
@@ -4987,7 +5140,7 @@ async function confirmAndPlaceBet() {
         window.userWallet.transactions.unshift({
             id: Date.now() + Math.random(),
             type: 'Bet Stake',
-            description: `Win Bet: ${dogName} (${trackName})`,
+            description: `Win Bet: ${dogName} (${trackName}) [${isFixed ? 'Fixed: ' + fixedWinOdds : 'Pool'}]`,
             amount: -winStake,
             balanceAfter: window.userWallet.balance,
             timestamp: timestampStr
@@ -5003,9 +5156,9 @@ async function confirmAndPlaceBet() {
             raceNum: raceNum,
             betType: 'Place',
             stake: placeStake,
-            odds: fixedPlaceOdds,
+            odds: fixedPlaceOdds,             
             estReturn: placeStake * fixedPlaceOdds,
-            isFixedOdds: isFixed,
+            isFixedOdds: isFixed,             
             fixedOdds: isFixed ? fixedPlaceOdds : null,
             timestamp: timestampStr,
             status: 'active'
@@ -5013,7 +5166,7 @@ async function confirmAndPlaceBet() {
         window.userWallet.transactions.unshift({
             id: Date.now() + Math.random() + 1,
             type: 'Bet Stake',
-            description: `Place Bet: ${dogName} (${trackName})`,
+            description: `Place Bet: ${dogName} (${trackName}) [${isFixed ? 'Fixed: ' + fixedPlaceOdds : 'Pool'}]`,
             amount: -placeStake,
             balanceAfter: window.userWallet.balance,
             timestamp: timestampStr
@@ -5031,16 +5184,39 @@ async function confirmAndPlaceBet() {
 
 function closePlaceBetModal() {
     let modal = document.getElementById('place-bet-modal');
+    if (!modal) return;
+
+    // 1. Hide the modal (with any transition classes your app uses)
+    modal.classList.add('opacity-0', 'hidden');
     let modalContent = document.getElementById('place-bet-modal-content');
-    
-    if (modal && modalContent) {
-        modal.classList.add('opacity-0');
+    if (modalContent) {
         modalContent.classList.add('scale-95');
-        
-        setTimeout(() => {
-            modal.classList.add('hidden');
-        }, 300); // Matches the 300ms transition duration
     }
+
+    // 2. Reset Odds Locking / Fixed Rate toggle & hide container
+    let fixedToggle = document.getElementById('fixedOddsToggle') || document.getElementById('oddsLockToggle');
+    let fixedContainer = document.getElementById('fixedOddsInputsContainer');
+    if (fixedToggle) fixedToggle.checked = false;
+    if (fixedContainer) fixedContainer.classList.add('hidden');
+
+    // 3. Reset Kelly Criterion toggle & state
+    let kellyToggle = document.getElementById('kellyCriterionToggle');
+    if (kellyToggle) {
+        kellyToggle.checked = false;
+        isKellyActive = false;
+    }
+
+    // 4. Reset Fully Hedge Place toggle
+    let hedgeToggle = document.getElementById('hedgePlaceToggle');
+    if (hedgeToggle) {
+        hedgeToggle.checked = false;
+    }
+
+    // 5. Clear input values so they are fresh next time
+    let winStakeEl = document.getElementById('winStakeInput');
+    let placeStakeEl = document.getElementById('placeStakeInput');
+    if (winStakeEl) winStakeEl.value = "";
+    if (placeStakeEl) placeStakeEl.value = "";
 }
 
 function updateWalletDisplay() {
@@ -5260,7 +5436,6 @@ function renderBettingTab() {
     let placeStrike = placeBetsSettled.length > 0 ? (placeHits / placeBetsSettled.length) * 100 : 0;
     let combinedStrike = totalSettledCount > 0 ? (totalWinsHit / totalSettledCount) * 100 : 0;
 
-    // Update UI Summary Elements with Filtered Results
     let profitEl = document.getElementById('wallet-profit-display');
     if (profitEl) {
         profitEl.innerText = `${netProfit >= 0 ? '+' : ''}$${netProfit.toFixed(2)}`;
@@ -5295,16 +5470,21 @@ function renderBettingTab() {
                 let stake = bet.stake || 0;
                 let odds = bet.odds || 0;
                 let estReturn = bet.estReturn || (stake * odds);
-                let fixedBadge = bet.isFixedOdds ? `<span class="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50/80 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 border border-amber-100 dark:border-amber-900/30">Fixed</span>` : '';
+                
+                // Yellow Fixed Badge placed next to dog name
+let fixedBadge = bet.isFixedOdds ? 
+    `<span class="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-yellow-400 text-yellow-950 dark:bg-yellow-500 dark:text-slate-950 shadow-sm" title="Fixed Rate Odds">Fixed</span>` : '';
 
-                html += `
-                    <div class="bg-slate-50 dark:bg-slate-800 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-3">
-                        <div>
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <span class="font-black text-slate-900 dark:text-white text-sm">${bet.dogName || "Unknown"} (${bet.betType || "Win"})</span>
-                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-300">Active</span>
-                            </div>
-                            <div class="text-[11px] text-slate-500 mt-0.5">${bet.trackName || ""} • Stake: <strong class="text-slate-800 dark:text-slate-200 font-mono">$${stake.toFixed(2)}</strong> • Odds: <strong class="text-slate-800 dark:text-slate-200 font-mono">${odds.toFixed(2)}</strong>${fixedBadge}</div>
+html += `
+    <div class="bg-slate-50 dark:bg-slate-800 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-3">
+        <div>
+            <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-black text-slate-900 dark:text-white text-sm">${bet.dogName || "Unknown"}</span>
+                ${fixedBadge} <!-- 👈 Yellow Fixed Badge inserted here -->
+                <span class="text-slate-500 font-semibold">(${bet.betType || "Win"})</span>
+                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-300">Active</span>
+            </div>
+                            <div class="text-[11px] text-slate-500 mt-0.5">${bet.trackName || ""} • Stake: <strong class="text-slate-800 dark:text-slate-200 font-mono">$${stake.toFixed(2)}</strong> • Odds: <strong class="text-slate-800 dark:text-slate-200 font-mono">${odds.toFixed(2)}</strong></div>
                         </div>
                         <div class="flex items-center gap-4 flex-wrap w-full sm:w-auto justify-between sm:justify-end">
                             <div class="text-right">
@@ -5336,16 +5516,21 @@ function renderBettingTab() {
                 let isWin = profit > 0;
                 
                 let badgeClass = isWin ? 'bg-green-100 text-green-800 dark:bg-green-950/60 dark:text-green-300 border-green-300' : 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300 border-red-300';
-                let fixedBadge = bet.isFixedOdds ? `<span class="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50/80 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 border border-amber-100 dark:border-amber-900/30">Fixed</span>` : '';
+                
+                // Yellow Fixed Badge placed next to dog name
+                let fixedBadge = bet.isFixedOdds ? 
+                    `<span class="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-yellow-400 text-yellow-950 dark:bg-yellow-500 dark:text-slate-950 shadow-sm" title="Fixed Rate Odds">Fixed</span>` : '';
 
                 html += `
                     <div class="bg-slate-50 dark:bg-slate-800 p-3.5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-3">
                         <div>
                             <div class="flex items-center gap-2 flex-wrap">
-                                <span class="font-black text-slate-900 dark:text-white text-sm">${bet.dogName || "Unknown"} (${bet.betType || "Win"})</span>
+                                <span class="font-black text-slate-900 dark:text-white text-sm">${bet.dogName || "Unknown"}</span>
+                                ${fixedBadge}
+                                <span class="text-slate-500 font-semibold">(${bet.betType || "Win"})</span>
                                 <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${badgeClass}">${isWin ? 'Won' : 'Lost'}</span>
                             </div>
-                            <div class="text-[11px] text-slate-500 mt-0.5">${bet.trackName || ""} • Stake: <strong class="text-slate-800 dark:text-slate-200 font-mono">$${stake.toFixed(2)}</strong> • Odds: <strong class="text-slate-800 dark:text-slate-200 font-mono">${(bet.odds || 0).toFixed(2)}</strong>${fixedBadge}</div>
+                            <div class="text-[11px] text-slate-500 mt-0.5">${bet.trackName || ""} • Stake: <strong class="text-slate-800 dark:text-slate-200 font-mono">$${stake.toFixed(2)}</strong> • Odds: <strong class="text-slate-800 dark:text-slate-200 font-mono">${(bet.odds || 0).toFixed(2)}</strong></div>
                         </div>
                         <div class="flex items-center gap-3 flex-wrap w-full sm:w-auto justify-between sm:justify-end">
                             <div class="flex items-center gap-1.5">
@@ -6365,19 +6550,27 @@ function clearDutchSelections() {
 }
 
 function toggleOddsLockInputs() {
-    let oddsLockToggle = document.getElementById('oddsLockToggle');
+    let toggle = document.getElementById('oddsLockToggle');
     let container = document.getElementById('fixedOddsInputsContainer');
     
-    if (oddsLockToggle && container) {
-        if (oddsLockToggle.checked) {
-            // If checked (locked), show the custom fixed odds input fields
-            container.classList.remove('hidden');
-        } else {
-            // If unchecked (unlocked/reverted), hide the manual inputs
-            container.classList.add('hidden');
-        }
+    if (!toggle || !container) return;
+
+    if (toggle.checked) {
+        container.classList.remove('hidden');
+        
+        // Optional: Pre-populate fixed odds inputs with current pool values if empty
+        let currentWinDiv = document.getElementById('bet-modal-windiv')?.value || '';
+        let currentPlaceDiv = document.getElementById('bet-modal-placediv')?.value || '';
+        
+        let winInput = document.getElementById('fixedWinOddsInput');
+        let placeInput = document.getElementById('fixedPlaceOddsInput');
+        
+        if (winInput && !winInput.value && currentWinDiv) winInput.value = currentWinDiv;
+        if (placeInput && !placeInput.value && currentPlaceDiv) placeInput.value = currentPlaceDiv;
+    } else {
+        container.classList.add('hidden');
     }
-    // Run your calculation update as well
+    
     updateCombinedBetCalculation();
 }
 
@@ -6582,8 +6775,35 @@ function processAdvancedProbabilityAndValue(options = {}) {
         dog.suggestedKellyStake = Math.round(optimalStake * 2) / 2;
     });
 
-    // Rank and sort dogs by highest EV Edge
-    dogs.sort((a, b) => b.evEdge - a.evEdge);
+// Rank and sort dogs by highest Blended Win Probability (largest to smallest)
+    dogs.sort((a, b) => {
+        let probA = parseFloat(a.blendedWinProb !== undefined ? a.blendedWinProb : (a.winProb || a.softmaxProb || 0));
+        let probB = parseFloat(b.blendedWinProb !== undefined ? b.blendedWinProb : (b.winProb || b.softmaxProb || 0));
+        return probB - probA; 
+    });
 
     console.log(`🚀 Enhanced Probability Engine Executed | Overround: ${overroundPct.toFixed(1)}% | Dynamic Weights Applied`);
+}
+
+// Example: When your model weights are modified or saved
+function updateModelWeights(newWeights) {
+    // 1. Update your global or local weight configuration
+    window.customModelWeights = newWeights;
+
+    // 2. Immediately trigger a fresh calculation and UI refresh
+    if (typeof refreshPredictions === 'function') {
+        refreshPredictions();
+    } else if (typeof computeRacePredictionData === 'function') {
+        // Fallback: recompute and re-render the meter directly
+        window.currentComputedResult = computeRacePredictionData(activeRace);
+        renderWinProbabilitiesMeter();
+    }
+}
+// Inside your weight slider change event listener or handler:
+function handleWeightChange() {
+    // 1. Recompute the predictions with the new weights
+    window.currentComputedResult = computeRacePredictionData(activeRace);
+    
+    // 2. Immediately force the UI to re-render with the newly sorted list
+    renderWinProbabilitiesMeter();
 }
