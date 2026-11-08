@@ -284,20 +284,20 @@ function resetDefaultWeights() {
 function applyPreset(presetType) {
     let weights = {};
     if (presetType === 'sprint') {
-        weights = window.customPresets.sprint;
+        weights = window.customPresets ? window.customPresets.sprint : {};
         showNotification("Applied Sprint Preset: Loaded from customized settings.", "success");
     } else if (presetType === 'distance') {
-        weights = window.customPresets.distance;
+        weights = window.customPresets ? window.customPresets.distance : {};
         showNotification("Applied Distance Preset: Loaded from customized settings.", "success");
     }
 
     // 1. Prevent slider change listeners from triggering duplicate calculations
     window.isApplyingPreset = true;
 
-    // 2. Assign the weights to your active configuration
+    // 2. Assign the weights to your active configuration safely
     window.customModelWeights = weights;
 
-    // 3. Update the slider UI elements so they match the preset visually
+    // 3. Update the slider UI elements securely if they exist in the DOM
     for (let k in weights) {
         let el = document.getElementById(`w-${k}`);
         let valEl = document.getElementById(`val-w-${k}`);
@@ -315,7 +315,7 @@ function applyPreset(presetType) {
     }
 
     // 5. Clear manual order lock so the new preset scores sort automatically
-	if (window.currentComputedResult) {
+    if (window.currentComputedResult) {
         window.currentComputedResult.isManuallyOrdered = false;
     }
 
@@ -331,26 +331,6 @@ function applyPreset(presetType) {
         window.isApplyingPreset = false;
     });
 }
-
-// --- GLOBAL EVENT DELEGATION FOR SMOOTH RACE & MEETING CLICKS ---
-document.addEventListener('click', (e) => {
-    const targetCard = e.target.closest('[data-race-key], .batch-summary-card');
-    if (!targetCard) return;
-
-    const raceKey = targetCard.getAttribute('data-race-key') || targetCard.dataset.raceKey;
-    if (!raceKey) return;
-
-    // Defer heavy calculations and DOM updates to keep the click lightning-fast
-    requestAnimationFrame(() => {
-        window.activeRaceKey = raceKey;
-        if (typeof refreshPredictions === 'function') {
-            refreshPredictions();
-        }
-        if (typeof renderBatchSummaryDashboard === 'function') {
-            renderBatchSummaryDashboard();
-        }
-    });
-});
 
 async function clearPredictionCache() {
     if (confirm("Are you sure you want to force-clear the computed analysis cache?")) {
@@ -656,16 +636,15 @@ async function sortAndPersistMeetingsObject() {
     });
     window.allRaceMeetings = sortedMeetings;
 
-    // Ensure wallet and bet arrays always have valid defaults so they never wipe out to undefined
     window.userWallet = window.userWallet || { balance: 0.00, staked: 0.00, profit: 0.00, transactions: [] };
     window.activeBets = Array.isArray(window.activeBets) ? window.activeBets : [];
     window.settledBets = Array.isArray(window.settledBets) ? window.settledBets : [];
 
-	const snapshotPayload = {
+    // Lightweight payload specifically for Firestore (OMIT bulky cache)
+    const firestorePayload = {
         meetings: window.allRaceMeetings,
         activeKey: window.activeRaceKey,
         stats: window.dogStats,
-        // OMIT 'cache' from Firestore payload to prevent exceeding the 1 MB document size limit
         savedPredictions: window.savedPredictions,
         customPresets: window.customPresets,
         userWallet: window.userWallet,
@@ -674,17 +653,42 @@ async function sortAndPersistMeetingsObject() {
         exportDate: new Date().toISOString()
     };
 
+// Sanitize to remove any unexpected undefined values causing Firestore rejection
+    const cleanPayload = sanitizeForFirestore(firestorePayload);
+
     try {
         if (window.db && window.firebaseTools) {
             const { doc, setDoc } = window.firebaseTools;
-            await setDoc(doc(window.db, "gbets", "masterState"), snapshotPayload);
+            await setDoc(doc(window.db, "gbets", "masterState"), cleanPayload);
             setLiveStatusSymbol('connected');
         }
     } catch (err) {
         console.warn("Firebase sync warning:", err);
         setLiveStatusSymbol('disconnected');
     }
+	
+	// Add this helper function anywhere in your script
+function sanitizeForFirestore(obj) {
+    if (obj === undefined) return null;
+    if (obj === null || typeof obj !== 'object') return obj;
+    
+    if (Array.isArray(obj)) {
+        return obj.map(item => sanitizeForFirestore(item));
+    }
+    
+    let sanitized = {};
+    for (let key of Object.keys(obj)) {
+        let val = obj[key];
+        if (val !== undefined) {
+            sanitized[key] = sanitizeForFirestore(val);
+        } else {
+            sanitized[key] = null; // Replaces undefined with null safely for Firestore
+        }
+    }
+    return sanitized;
+}
 
+    // Local IndexedDB can handle the full cache safely without Firebase size restrictions
     try {
         if (db && window.isIndexedDBAvailable) {
             await db.transaction('rw', db.sessions, async () => {
@@ -1371,10 +1375,8 @@ function getRacePillStatus(key) {
 
     if (isSettled) return 'settled';
     
-    // STRICTLY check if this specific race was explicitly analyzed and persisted
-    if (raceObj.isAnalyzed) {
-        return 'computed';
-    }
+    // 👉 Only show computed (green) if explicitly marked as analyzed by the user
+    if (raceObj.isAnalyzed) return 'computed'; 
     
     return 'neutral';
 }
@@ -1789,24 +1791,30 @@ function renderBatchSummaryDashboard() {
 
     let cardsHtml = '';
     
-filteredKeys.forEach(key => {
+    filteredKeys.forEach(key => {
         let race = window.allRaceMeetings[key];
         let topPick = "Pending Stats";
-        let confidence = "-";
-        let confBadgeClass = "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300";
 
 		let runnerCount = 0;
-        if (race.starters && Array.isArray(race.starters) && race.starters.length > 0) {
-            // Filter out scratched dogs and vacant boxes
-            runnerCount = race.starters.filter(s => !s.scratched && !s.starterName.toUpperCase().includes('VACANT')).length;
-        } else if (race.dogs && Array.isArray(race.dogs) && race.dogs.length > 0) {
-            runnerCount = race.dogs.filter(d => !d.scratched && !d.name.toUpperCase().includes('VACANT')).length;
-        } else if (race.runners && Array.isArray(race.runners) && race.runners.length > 0) {
-            runnerCount = race.runners.filter(r => !r.scratched && !r.name.toUpperCase().includes('VACANT')).length;
+        let rawStarters = race.starters || race.dogs || race.runners || race.dogList || [];
+        
+        if (Array.isArray(rawStarters) && rawStarters.length > 0) {
+            // Filter out scratched dogs so only active runners are counted
+            let activeStarters = rawStarters.filter(dog => {
+                let status = typeof dog === 'string' ? '' : (dog.status || dog.state || dog.condition || '');
+                let isScratched = typeof dog === 'object' && (dog.isScratched || dog.scratched || status.toUpperCase().includes('SCRATCHED'));
+                return !isScratched;
+            });
+            runnerCount = activeStarters.length;
+        }
+
+        // Also check scratchedDogs array if your race object tracks them separately
+        if (race.scratchedDogs && Array.isArray(race.scratchedDogs) && race.scratchedDogs.length > 0) {
+            runnerCount = Math.max(0, runnerCount - race.scratchedDogs.length);
         }
 
         // Always compute or retrieve prediction data so cards show top picks immediately
-		let computed = null;
+        let computed = null;
         if (window.computedPredictionsCache && typeof window.computedPredictionsCache[key] === 'object' && window.computedPredictionsCache[key] !== null) {
             computed = window.computedPredictionsCache[key];
         } else if (race.computedResult) {
@@ -1827,17 +1835,13 @@ filteredKeys.forEach(key => {
             });
 
             topPick = sortedScoredDogs[0].name;
-            confidence = computed.confidenceText || "Moderate";
-            confBadgeClass = computed.confidenceBadgeClass || "bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300";
         } else {
             // Fallback: If historical stats aren't loaded for this track yet, show first starter name if available
             let fallbackStarters = race.starters || race.dogs || race.runners || race.dogList;
             if (fallbackStarters && fallbackStarters.length > 0) {
                 let firstDog = fallbackStarters[0];
                 topPick = typeof firstDog === 'string' ? firstDog : (firstDog.name || "Ready to Analyze");
-                confidence = "Awaiting Stats";
-                confBadgeClass = "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300";
-			}
+            }
         }
 
         let cleanDate = race.raceDate || "No Date";
@@ -1861,11 +1865,7 @@ filteredKeys.forEach(key => {
                             <span class="text-[10px] font-mono text-slate-500 dark:text-slate-400">${race.raceDistance ? '📏 ' + race.raceDistance : ''}</span>
                         </div>
                     </div>
-                    <div class="text-sm font-black text-slate-900 dark:text-white mb-3">🥇 ${topPick}</div>
-                </div>
-                <div class="flex justify-between items-center pt-2 border-t border-slate-200 dark:border-slate-700">
-                    <span class="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Confidence</span>
-                    <span class="text-[10px] px-2 py-0.5 rounded font-bold ${confBadgeClass}">${confidence}</span>
+                    <div class="text-sm font-black text-slate-900 dark:text-white">🥇 ${topPick}</div>
                 </div>
             </div>
         `;
@@ -3064,152 +3064,317 @@ return {
     };
 } // <-- Closes computeRacePredictionData
 
-// Inside your prediction calculation / refresh function:
-if (window.activeRaceKey && window.allRaceMeetings[window.activeRaceKey]) {
-    window.allRaceMeetings[window.activeRaceKey].isAnalyzed = true;
-    
-    // Automatically trigger your save function so it syncs to IndexedDB & Firebase
-    if (typeof sortAndPersistMeetingsObject === 'function') {
-        sortAndPersistMeetingsObject();
-    }
-}
-
-// Then use 'statusIcon' in your HTML generation for the button/icon
-
-// Independent rendering function placed safely outside
-function renderWinProbabilitiesTab(scoredDogs) {
-    let sortedDogs = [...scoredDogs];
-
-    // Respect manual ordering if active, otherwise sort descending by blendedWinProb
-    if (!window.currentComputedResult || !window.currentComputedResult.isManuallyOrdered) {
-        sortedDogs.sort((a, b) => {
-            let probA = parseFloat(a.blendedWinProb !== undefined ? a.blendedWinProb : (a.winProb || a.softmaxProb || 0));
-            let probB = parseFloat(b.blendedWinProb !== undefined ? b.blendedWinProb : (b.winProb || b.softmaxProb || 0));
-            return probB - probA; 
-        });
-    }
-
-    let cardsHtml = sortedDogs.map((dog, index) => {
-        let prob = parseFloat(dog.blendedWinProb !== undefined ? dog.blendedWinProb : (dog.winProb || 0)).toFixed(1);
-        return `
-            <div class="runner-card p-3 mb-2 rounded bg-slate-800 text-white">
-                <div class="flex justify-between items-center">
-                    <span>${index + 1}. ${dog.name} (B${dog.box})</span>
-                    <span>${prob}%</span>
-                </div>
-            </div>
-        `;
-    }).join('');
-
-    let container = document.getElementById('win-probabilities-container');
-    if (container) {
-        container.innerHTML = cardsHtml;
-    }
-}
-
-// Swap runner ranks manually in the current computed result
+// Robust move prediction rank function using direct array indexing
 function movePredictionRank(index, direction) {
     if (!window.currentComputedResult || !window.currentComputedResult.scoredDogs) return;
     
     let scoredDogs = window.currentComputedResult.scoredDogs;
     let targetIndex = index + direction;
-
-    // Boundary check
     if (targetIndex < 0 || targetIndex >= scoredDogs.length) return;
 
-    // Swap the dogs in the array
+    // Swap elements in the active scoredDogs array
     let temp = scoredDogs[index];
     scoredDogs[index] = scoredDogs[targetIndex];
     scoredDogs[targetIndex] = temp;
 
-    // CRITICAL: Lock manual ordering so auto-sort doesn't immediately revert the swap
+    // Set manual ordering flag
     window.currentComputedResult.isManuallyOrdered = true;
-    window.currentComputedResult.scoredDogs = scoredDogs;
 
-    // Re-render the meter and tabs using the manual order
-    if (typeof renderWinProbabilitiesMeter === 'function') {
-        renderWinProbabilitiesMeter();
+    // Update cache if present
+    if (window.activeRaceKey && window.computedPredictionsCache[window.activeRaceKey]) {
+        window.computedPredictionsCache[window.activeRaceKey].scoredDogs = scoredDogs;
+        window.computedPredictionsCache[window.activeRaceKey].isManuallyOrdered = true;
     }
-    if (typeof renderWinProbabilitiesTab === 'function') {
-        renderWinProbabilitiesTab(scoredDogs);
-    }
+
+    // Re-render UI components directly using the reordered scoredDogs array
+	updateTopPickCard();
+    updateWinMeterAndRunnerCards();
 }
 
+function updateWinMeterAndRunnerCards() {
+    let scoredDogs = window.currentComputedResult.scoredDogs;
+    let activeRace = window.allRaceMeetings[window.activeRaceKey] || {};
+
+    // Find baseline absolute fastest average time for consistent badge calculations
+    let absoluteFastestDog = [...scoredDogs].reduce((fastest, current) => {
+        let tFastest = (fastest.rawAvgTime !== null && !isNaN(fastest.rawAvgTime)) ? fastest.rawAvgTime : 999;
+        let tCurrent = (current.rawAvgTime !== null && !isNaN(current.rawAvgTime)) ? current.rawAvgTime : 999;
+        return tCurrent < tFastest ? current : fastest;
+    }, scoredDogs[0]);
+    let baselineAvgTime = absoluteFastestDog ? absoluteFastestDog.rawAvgTime : null;
+
+    let meterHtml = '';
+    scoredDogs.forEach((dog, idx) => {
+        let rank = idx + 1;
+        let colorClass = rank === 1 ? 'text-green-600 dark:text-green-400 font-black' : (rank === 2 ? 'text-yellow-600 dark:text-yellow-400 font-bold' : 'text-slate-700 dark:text-slate-300 font-medium');
+        let barColor = rank === 1 ? 'bg-green-500' : (rank === 2 ? 'bg-yellow-400' : 'bg-slate-400 dark:bg-slate-600');
+        let sexIcon = dog.sex === 'Dog' ? '🐶' : (dog.sex === 'Bitch' ? '🐾' : '');
+        
+        let rawProb = dog.softmaxProb !== undefined ? dog.softmaxProb : (dog.winProb || 0);
+        let probVal = parseFloat(rawProb).toFixed(1);
+		let ratingVal = (dog.ratingOutOf100 !== undefined && dog.ratingOutOf100 !== null) ? dog.ratingOutOf100 : rank;
+
+        let lengthsText = "0.0L";
+        let isAbsoluteFastest = (absoluteFastestDog && dog.name === absoluteFastestDog.name);
+        if (isAbsoluteFastest) {
+            lengthsText = "Top Pick";
+        } else if (baselineAvgTime !== null && dog.rawAvgTime !== null && !isNaN(baselineAvgTime) && !isNaN(dog.rawAvgTime)) {
+            let timeDiff = dog.rawAvgTime - baselineAvgTime;
+            let lengths = timeDiff / 0.07;
+            let sign = timeDiff > 0 ? "+" : "";
+            lengthsText = `${sign}${lengths.toFixed(1)}L`;
+        }
+
+        let manualControls = '<div class="flex items-center gap-1 ml-1 inline-flex">' +
+        '<button onclick="movePredictionRank(' + idx + ', -1)" ' + (idx === 0 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"') + '>▲</button>' +
+        '<button onclick="movePredictionRank(' + idx + ', 1)" ' + (idx === scoredDogs.length - 1 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"') + '>▼</button>' +
+        '</div>';
+
+			meterHtml += '<div class="space-y-1 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">' +
+            '<div class="flex flex-wrap justify-between items-center gap-2 text-sm">' +
+            '<div class="flex items-center gap-1.5 flex-wrap">' +
+            '<span class="' + colorClass + '">' + rank + '. ' + dog.name + ' ' + sexIcon + ' <span class="text-xs font-mono text-slate-400">(B' + (dog.officialBox || dog.box) + ')</span></span>' +
+            '<span class="bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-bold px-1.5 py-0.5 rounded border border-indigo-200 dark:border-indigo-800 text-xs font-mono" title="Margin vs Top Pick">' + lengthsText + '</span>' +
+            '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black font-mono bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 ml-1"><span class="text-red-500">&#9733;</span> ' + ratingVal + '</span>' +
+            manualControls +
+            '</div>' +
+            '<div class="flex items-center gap-2 font-mono text-xs">' +
+            '<span class="font-bold text-slate-900 dark:text-white">' + probVal + '%</span>' +
+            '</div>' +
+            '</div>' +
+            '<div class="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">' +
+            '<div class="' + barColor + ' h-2 rounded-full transition-all duration-500" style="width: ' + probVal + '%"></div>' +
+            '</div>' +
+            '</div>';
+    });
+
+    document.getElementById('probability-win-meter-container').innerHTML = meterHtml;
+
+    if (window.currentComputedResult.isManuallyOrdered) {
+        let resetHtml = meterHtml + `<div class="mt-2 text-right"><button onclick="resetPredictionManualOrder()" class="text-[11px] text-purple-600 dark:text-purple-400 font-bold hover:underline">🔄 Reset Manual Order</button></div>`;
+        document.getElementById('probability-win-meter-container').innerHTML = resetHtml;
+    }
+
+    // Favorite determination
+    let validWinDivs = scoredDogs.map(d => parseFloat(d.winDiv) || 0).filter(div => div > 0);
+    let lowestWinDiv = validWinDivs.length > 0 ? Math.min(...validWinDivs) : 0;
+    let favoriteDogName = "";
+    if (lowestWinDiv > 0) {
+        let tiedDogs = scoredDogs.filter(d => (parseFloat(d.winDiv) || 0) === lowestWinDiv);
+        if (tiedDogs.length === 1) {
+            favoriteDogName = tiedDogs[0].name.toUpperCase();
+        } else if (tiedDogs.length > 1) {
+            tiedDogs.sort((a, b) => {
+                let pA = (parseFloat(a.placeDiv) > 0) ? parseFloat(a.placeDiv) : 999;
+                let pB = (parseFloat(b.placeDiv) > 0) ? parseFloat(b.placeDiv) : 999;
+                return pA - pB;
+            });
+            favoriteDogName = tiedDogs[0].name.toUpperCase();
+        }
+    }
+
+    let analysisHtml = '';
+    let boxSortedDogs = [...scoredDogs].sort((a, b) => {
+        let boxA = parseInt(a.officialBox || a.box || 99);
+        let boxB = parseInt(b.officialBox || b.box || 99);
+        return boxA - boxB;
+    });
+
+    boxSortedDogs.forEach((dog) => {
+        let sexBadge = dog.sex === 'Dog' ? '<span class="text-blue-600 dark:text-blue-400 text-xs font-bold ml-1">🐶</span>' : (dog.sex === 'Bitch' ? '<span class="text-pink-600 dark:text-pink-400 text-xs font-bold ml-1">🐾</span>' : '');
+        let sparkline = generateSparkline(dog.formArray);
+        
+        let daysSinceText = (dog.daysSinceLastRun !== null && dog.daysSinceLastRun !== undefined) 
+            ? `<span class="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1 block">⏱️ Days Since Last Run: <strong class="text-slate-800 dark:text-slate-200">${dog.daysSinceLastRun} days</strong> (${dog.recencyText || ''})</span>` 
+            : `<span class="text-xs font-mono text-slate-400 mt-1 block">⏱️ Days Since Last Run: N/A</span>`;
+       
+        let isFavorite = favoriteDogName !== "" && dog.name.toUpperCase() === favoriteDogName;
+        let favoriteBadge = isFavorite ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 ml-2">⭐ Favorite</span>` : '';
+
+        let pirBadge = getRunningStyleBadge(parseFloat(dog.avgEarly), parseFloat(dog.avgGain));
+        let boxBiasBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">📦 Box ${dog.officialBox}: +${dog.boxBiasBonus.toFixed(1)}</span>`;
+        let trafficBadge = dog.trafficPenalty !== 0 ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800">🚦 Traffic Penalty: ${dog.trafficPenalty > 0 ? '+' : ''}${dog.trafficPenalty}</span>` : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">🚦 Clean Map</span>`;
+
+        let marginDisplay = "";
+        let currentRank = scoredDogs.findIndex(d => d.name === dog.name);
+        let isTopPickCard = (currentRank === 0);
+        
+        if (isTopPickCard) {
+            marginDisplay = '<span class="text-green-600 dark:text-green-400 font-bold">Top Pick</span>';
+        } else if (baselineAvgTime !== null && dog.rawAvgTime !== null && !isNaN(baselineAvgTime) && !isNaN(dog.rawAvgTime)) {
+            let timeDiff = dog.rawAvgTime - baselineAvgTime;
+            let lengths = timeDiff / 0.07;
+            let sign = timeDiff >= 0 ? "+" : "";
+            marginDisplay = `Margin vs Top: <strong class="font-mono text-slate-800 dark:text-slate-200">${sign}${timeDiff.toFixed(2)}s (${sign}${lengths.toFixed(1)}L)</strong>`;
+        } else {
+            marginDisplay = `Margin vs Top: <span class="text-slate-400 font-mono">N/A</span>`;
+        }
+
+        let bgColor = "bg-white dark:bg-slate-900";
+        let borderColor = "border-slate-200 dark:border-slate-800";
+        
+        if (currentRank === 0) {
+            bgColor = "bg-[#dcfce7] dark:bg-green-950/40"; // Light pastel green (1st)
+            borderColor = "border-[#86efac] dark:border-green-800";
+        } else if (currentRank === 1) {
+            bgColor = "bg-[#fef3c7] dark:bg-amber-950/40"; // Light pastel orange/amber (2nd)
+            borderColor = "border-[#fde047] dark:border-amber-800";
+        } else if (currentRank === 2) {
+            bgColor = "bg-[#fee2e2] dark:bg-rose-950/40"; // Light pastel red/rose (3rd)
+            borderColor = "border-[#fca5a5] dark:border-rose-800";
+        }
+
+        let encodedName = encodeURIComponent(dog.name);
+        let encodedRaceKey = encodeURIComponent(window.activeRaceKey);
+        let evVal = dog.expectedValuePercent !== undefined ? dog.expectedValuePercent : 0;
+        let valueBadge = evVal >= 8.0 ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">🟢 VALUE (+${evVal.toFixed(1)}% EV)</span>` : '';
+
+	analysisHtml += `
+				  <li class="runner-card ${bgColor} p-4 border ${borderColor} rounded-lg shadow-sm flex flex-col md:flex-row md:justify-between mb-3 transition-colors">
+						<div class="mb-2 md:mb-0 flex flex-col justify-center">
+							<div class="flex items-center flex-wrap gap-2">
+								<input type="checkbox" class="h2h-checkbox w-4 h-4 text-blue-600 rounded cursor-pointer" data-dog-name="${dog.name}" onchange="handleH2HSelection(this)" title="Select for Head-to-Head Comparison">
+								<strong data-dog-name="${encodedName}" class="dog-name-click text-lg ${isTopPickCard ? 'text-green-900 dark:text-green-200 font-black cursor-pointer hover:text-blue-600 dark:hover:text-blue-400': 'text-slate-800 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400'}">
+									${dog.name}
+								</strong> 
+								${sexBadge} 
+								<span class="text-sm font-mono text-slate-500 dark:text-slate-400 font-bold ml-1">(Box ${dog.officialBox})</span> 
+								${favoriteBadge}
+							</div>
+							<div class="mt-2 flex flex-col gap-2">
+								<div class="flex items-center gap-2">
+									<span class="text-xs text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">Form:</span>
+									${sparkline}
+								</div>
+								${daysSinceText}
+								<div class="mt-1">
+									<button data-dog-name="${encodedName}" data-race-key="${encodedRaceKey}" data-race-num="${activeRace.raceNumber || 1}" data-win-div="${dog.winDiv}" data-place-div="${dog.placeDiv}" class="bet-btn bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded text-xs shadow transition-colors inline-flex items-center gap-1">💰 Bet</button>
+								</div>
+							</div>
+						</div>
+						<div class="text-sm text-slate-700 dark:text-slate-300 md:text-right flex flex-col items-start md:items-end justify-center gap-1.5">
+							<div class="flex items-center gap-1.5 flex-wrap">${pirBadge} ${boxBiasBadge} ${trafficBadge} ${valueBadge}</div>
+							<div class="flex items-center gap-2 flex-wrap">
+								<span class="block">Win Div: <strong class="text-slate-900 dark:text-white font-mono text-base">$${dog.winDiv}</strong> | Place Div: <strong class="text-slate-900 dark:text-white font-mono text-base">$${dog.placeDiv}</strong> | Softmax Prob: <strong class="text-green-700 dark:text-green-400 font-mono">${dog.winProb.toFixed(1)}%</strong></span>
+							</div>
+							<span class="block text-slate-500 dark:text-slate-400 text-xs mt-1"><strong>Avg Time: <span class="font-mono text-slate-800 dark:text-slate-200">${dog.avgTrackDistTime}s</span></strong> | <strong>Avg 1Sec: <span class="font-mono text-slate-800 dark:text-slate-200">${dog.avgTrackDistSplit}s</span></strong> | ${marginDisplay}</span>
+							<span class="block text-slate-400 dark:text-slate-500 text-[11px]">Early Pos: ${dog.avgEarly} | Gain: <strong class="text-green-600 dark:text-green-400">+${dog.avgGain}</strong> | Best Time: <span class="font-mono">${dog.bestTime}s</span> | Best 1Sec: <span class="font-mono">${dog.best1Sec}s</span></span>
+						</div>
+					</li>
+				`;
+			});
+
+    document.getElementById('runner-analysis-list').innerHTML = analysisHtml;
+    
+    // Re-bind click events
+    document.querySelectorAll('.dog-name-click').forEach(el => {
+        el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openScoreBreakdownModal(e.currentTarget.getAttribute('data-dog-name'));
+        });
+    });
+
+    document.querySelectorAll('.bet-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation(); 
+            openPlaceBetModal(btn.getAttribute('data-dog-name'), btn.getAttribute('data-race-key'), btn.getAttribute('data-race-num'), btn.getAttribute('data-win-div'), btn.getAttribute('data-place-div'));
+        });
+    });
+}
+
+// Reset manual ordering back to default margin/avg time sort order
+function resetPredictionManualOrder() {
+    if (window.currentComputedResult) {
+        window.currentComputedResult.isManuallyOrdered = false;
+    }
+    
+    // Call updateTopPickCard cleanly without parameters
+    updateTopPickCard();
+    
+    // Refresh predictions to rebuild the chart
+    refreshPredictions(false);
+}
+
+// Independent rendering function placed safely outside
 function renderWinProbabilitiesMeter() {
     if (window.isApplyingPreset) return;
     if (!window.currentComputedResult || !window.currentComputedResult.scoredDogs) return;
     
-    // DEBUG: Let's inspect what data the UI is actually receiving
-    console.log("Rendering dogs order:", window.currentComputedResult.scoredDogs.map(d => `${d.name}: ${d.blendedWinProb || d.winProb}`.trim()));
+    let scoredDogs = window.currentComputedResult.scoredDogs;
 
-    let scoredDogs = [...window.currentComputedResult.scoredDogs];
-
-    // ONLY auto-sort if the user hasn't manually moved the runners around!
+    // 1. Enforce default Margin / Avg Time sort on load unless manually locked
     if (!window.currentComputedResult.isManuallyOrdered) {
         scoredDogs.sort((a, b) => {
-            let probA = parseFloat(a.blendedWinProb !== undefined ? a.blendedWinProb : (a.winProb || a.softmaxProb || 0));
-            let probB = parseFloat(b.blendedWinProb !== undefined ? b.blendedWinProb : (b.winProb || b.softmaxProb || 0));
-            return probB - probA; // Highest percentage always comes first automatically
+            let timeA = (a.rawAvgTime !== null && !isNaN(a.rawAvgTime)) ? a.rawAvgTime : 999;
+            let timeB = (b.rawAvgTime !== null && !isNaN(b.rawAvgTime)) ? b.rawAvgTime : 999;
+            return timeA - timeB;
         });
         window.currentComputedResult.scoredDogs = scoredDogs;
     }
+
+    // Determine top pick benchmark based on the current array order
+    let topPick = scoredDogs[0];
+    let topPickAvgTime = (topPick && topPick.rawAvgTime !== null && !isNaN(topPick.rawAvgTime)) ? topPick.rawAvgTime : null;
 
     let container = document.getElementById('probability-win-meter-container');
     if (!container) return;
 
     let meterHtml = '';
     scoredDogs.forEach((dog, idx) => {
-        // Ensure we explicitly use the correct sorted index for coloring and ranking
         let rank = idx + 1;
         let colorClass = rank === 1 ? 'text-green-600 dark:text-green-400 font-black' : (rank === 2 ? 'text-yellow-600 dark:text-yellow-400 font-bold' : 'text-slate-700 dark:text-slate-300 font-medium');
         let barColor = rank === 1 ? 'bg-green-500' : (rank === 2 ? 'bg-yellow-400' : 'bg-slate-400 dark:bg-slate-600');
         let sexIcon = dog.sex === 'Dog' ? '🐶' : (dog.sex === 'Bitch' ? '🐾' : '');
         
-        // Pull the exact blended win probability
-        let rawProb = dog.blendedWinProb !== undefined ? dog.blendedWinProb : (dog.winProb || dog.softmaxProb || 0);
+        let rawProb = dog.softmaxProb !== undefined ? dog.softmaxProb : 0;
         let probVal = parseFloat(rawProb).toFixed(1);
 
-        let manualControls = `
-            <div class="flex items-center gap-1 ml-2 inline-flex">
-                <button onclick="movePredictionRank(${idx}, -1)" ${idx === 0 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"'}>▲</button>
-                <button onclick="movePredictionRank(${idx}, 1)" ${idx === scoredDogs.length - 1 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"'}>▼</button>
-            </div>
-        `;
+        // Calculate lengths relative to top pick
+        let lengthsText = "0.0L";
+        if (idx === 0) {
+            lengthsText = "Top Pick";
+        } else if (topPickAvgTime !== null && dog.rawAvgTime !== null && !isNaN(dog.rawAvgTime)) {
+            let timeDiff = dog.rawAvgTime - topPickAvgTime;
+            let lengths = timeDiff / 0.07;
+            let sign = timeDiff > 0 ? "+" : "";
+            lengthsText = `${sign}${lengths.toFixed(1)}L`;
+        }
 
-        meterHtml += `
-            <div class="space-y-1 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
-                <div class="flex justify-between items-center text-sm">
-                    <div class="flex items-center gap-1">
-                        <span class="${colorClass}">${rank}. ${dog.name} ${sexIcon} <span class="text-xs font-mono text-slate-400">(B${dog.officialBox || dog.box})</span></span>
-                        ${manualControls}
-                    </div>
-                    <span class="font-mono font-bold text-xs">${probVal}%</span>
-                </div>
-                <div class="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
-                    <div class="${barColor} h-2 rounded-full transition-all duration-500" style="width: ${probVal}%"></div>
-                </div>
-            </div>
-        `;
+        let manualControls = '<div class="flex items-center gap-1 ml-1 inline-flex">' +
+            '<button onclick="movePredictionRank(' + idx + ', -1)" ' + (idx === 0 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"') + '>▲</button>' +
+            '<button onclick="movePredictionRank(' + idx + ', 1)" ' + (idx === scoredDogs.length - 1 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"') + '>▼</button>' +
+            '</div>';
+
+        meterHtml += '<div class="space-y-1 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">' +
+            '<div class="flex flex-wrap justify-between items-center gap-2 text-sm">' +
+            '<div class="flex items-center gap-1.5 flex-wrap">' +
+            '<span class="' + colorClass + '">' + rank + '. ' + dog.name + ' ' + sexIcon + ' <span class="text-xs font-mono text-slate-400">(B' + (dog.officialBox || dog.box) + ')</span></span>' +
+            '<span class="bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-bold px-1.5 py-0.5 rounded border border-indigo-200 dark:border-indigo-800 text-xs font-mono" title="Margin vs Top Pick">' + lengthsText + '</span>' +
+            manualControls +
+            '</div>' +
+            '<div class="flex items-center gap-2 font-mono text-xs">' +
+            '<span class="font-bold text-slate-900 dark:text-white">' + probVal + '%</span>' +
+            '</div>' +
+            '</div>' +
+            '<div class="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">' +
+            '<div class="' + barColor + ' h-2 rounded-full transition-all duration-500" style="width: ' + probVal + '%"></div>' +
+            '</div>' +
+            '</div>';
     });
 
     if (window.currentComputedResult.isManuallyOrdered) {
-        meterHtml += `<div class="mt-2 text-right"><button onclick="resetPredictionManualOrder()" class="text-[11px] text-purple-600 dark:text-purple-400 font-bold hover:underline cursor-pointer">🔄 Reset Manual Order</button></div>`;
-    }
-
-    // DEBUG: Log the correct top dog directly from scoredDogs[0]
-    if (scoredDogs.length > 0) {
-        let topProb = (scoredDogs[0].blendedWinProb !== undefined ? scoredDogs[0].blendedWinProb : (scoredDogs[0].winProb || 0)).toFixed(1);
-        console.log("Injected HTML for #1 dog:", scoredDogs[0].name, topProb);
+        meterHtml += '<div class="mt-2 text-right"><button onclick="resetPredictionManualOrder()" class="text-[11px] text-purple-600 dark:text-purple-400 font-bold hover:underline cursor-pointer">🔄 Reset Manual Order</button></div>';
     }
 
     container.innerHTML = meterHtml;
 
+    if (scoredDogs.length > 0) {
+        let topSexIcon = scoredDogs[0].sex === 'Dog' ? '🐶' : (scoredDogs[0].sex === 'Bitch' ? '🐾' : '');
+        let winningNameEl = document.getElementById('winning-dog-name');
+        if (winningNameEl) winningNameEl.innerText = scoredDogs[0].name + ' ' + topSexIcon;
+    }
 
-    let topSexIcon = scoredDogs[0].sex === 'Dog' ? '🐶' : (scoredDogs[0].sex === 'Bitch' ? '🐾' : '');
-    let winningNameEl = document.getElementById('winning-dog-name');
-    if (winningNameEl) winningNameEl.innerText = `${scoredDogs[0].name} ${topSexIcon}`;
-
-    // --- SEAMLESS DOM REORDERING FOR ACTIVE RUNNERS ---
+    // --- RUNNER ANALYSIS & FORM METRICS: PERMANENT BOX ORDER & STRIP LEADING NUMBERS ---
     let analysisList = document.getElementById('runner-analysis-list');
     if (analysisList) {
         let scratchedHeader = analysisList.querySelector('h4');
@@ -3218,14 +3383,25 @@ function renderWinProbabilitiesMeter() {
             return text.toUpperCase().includes('SCRATCHED');
         });
 
-        scoredDogs.forEach(dog => {
+        // Map and sort active runner cards strictly by Box Number (1 through 8)
+        let activeCards = scoredDogs.map(dog => {
+            let dogBox = parseInt(dog.officialBox || dog.box || 99);
             let card = Array.from(analysisList.children).find(li => {
                 let text = li.innerText || "";
                 return text.toUpperCase().includes(dog.name.toUpperCase()) && !text.toUpperCase().includes('SCRATCHED');
             });
-            if (card) {
-                analysisList.appendChild(card);
+            return { box: dogBox, card: card };
+        }).filter(item => item.card);
+
+        activeCards.sort((a, b) => a.box - b.box);
+
+        // Append cards in box order and clean up any leading numbers in headers/titles
+        activeCards.forEach(item => {
+            let headerEl = item.card.querySelector('h3, h4, strong, .runner-title');
+            if (headerEl) {
+                headerEl.innerText = headerEl.innerText.replace(/^\d+\.\s*/, '');
             }
+            analysisList.appendChild(item.card);
         });
 
         if (scratchedHeader && scratchedHeader.innerText.toUpperCase().includes('SCRATCHED')) {
@@ -3234,10 +3410,11 @@ function renderWinProbabilitiesMeter() {
         scratchedCards.forEach(card => analysisList.appendChild(card));
     }
 }
-
-function resetPredictionManualOrder() {
-    refreshPredictions(false);
-}
+	
+//function resetPredictionManualOrder() {
+//	updateTopPickCard(scoredDogs, activeRace);
+//  refreshPredictions(false);
+//}
 
 function renderRunnerAnalysisList() {
     if (!window.currentComputedResult || !window.currentComputedResult.scoredDogs) return;
@@ -3341,6 +3518,32 @@ let analysisHtml = "";
         });
     }
 
+function renderRaceQuickJump() {
+    const container = document.getElementById('race-quick-jump-container');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    let keys = getSortedRaceKeys();
+    
+    keys.forEach(key => {
+        const btn = document.createElement('button');
+        btn.className = 'race-nav-btn px-3 py-1.5 rounded text-sm font-medium transition-colors';
+        
+        const race = window.allRaceMeetings[key];
+        
+        // Only turn green if explicitly flagged as analyzed by you
+        if (race && race.isAnalyzed) {
+            btn.classList.add('bg-emerald-600', 'text-white', 'border-emerald-500'); // Green
+        } else {
+            btn.classList.add('bg-slate-700', 'text-slate-300', 'border-slate-600'); // Grey
+        }
+        
+        btn.innerText = `Race ${key}`;
+        btn.onclick = () => switchActiveRace(key);
+        container.appendChild(btn);
+    });
+}
+
 async function refreshPredictions(showNotif = true) {
     if (!window.activeRaceKey || !window.allRaceMeetings[window.activeRaceKey] || !window.dogStats || window.dogStats.length === 0) {
         if (showNotif) {
@@ -3352,40 +3555,20 @@ async function refreshPredictions(showNotif = true) {
     let activeRace = window.allRaceMeetings[window.activeRaceKey];
     let computed = computeRacePredictionData(activeRace);
     let scoredDogs = computed.scoredDogs;
+	window.currentScoredDogs = scoredDogs;
 
     if (scoredDogs.length > 0) {
-        // STORE THE FULL COMPUTED OBJECT IN CACHE (Fixes Meeting Summary cards)
         window.computedPredictionsCache[window.activeRaceKey] = computed;
-
-        // TAG RACE AS ANALYZED SO STATUS PERSISTS ACROSS REFRESHES
-        if (window.allRaceMeetings[window.activeRaceKey]) {
-            window.allRaceMeetings[window.activeRaceKey].isAnalyzed = true;
-        }
-
+        
+        // Explicitly mark this specific race as analyzed by you
+        activeRace.isAnalyzed = true; 
+        
         await sortAndPersistMeetingsObject();
         updateAllUIComponents();
+        renderRaceQuickJump();
 
         let subtitleText = `${window.activeRaceKey}${activeRace.raceDistance && !window.activeRaceKey.includes(activeRace.raceDistance) ? ' (' + activeRace.raceDistance + ')' : ''}`;
         document.getElementById('predictions-race-subtitle').innerText = subtitleText;
-
-        let topPick = scoredDogs[0];
-        let defaultWinPayout = 0;
-        let defaultPlacePayout = 0;
-        if (activeRace.actualWinner && activeRace.actualWinner.toUpperCase() === topPick.name.toUpperCase()) {
-            defaultWinPayout = topPick.winDiv > 0 ? topPick.winDiv : 2.0;
-            let activeCompetitorsCount = scoredDogs.length;
-            let payoutTier = activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only");
-            let podium = [activeRace.actualPlace1, activeRace.actualPlace2, activeRace.actualPlace3].map(n => (n || "").toUpperCase());
-            let eligiblePlaceHit = false;
-            if (payoutTier === "1,2,3") {
-                eligiblePlaceHit = podium.slice(0, 3).includes(topPick.name.toUpperCase());
-            } else if (payoutTier === "2") {
-                eligiblePlaceHit = podium.slice(0, 2).includes(topPick.name.toUpperCase());
-            }
-            if (eligiblePlaceHit) {
-                defaultPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
-            }
-        }
 
         let appliedWeights = {
             windiv: parseFloat(document.getElementById('w-windiv').value) || 0,
@@ -3411,79 +3594,129 @@ async function refreshPredictions(showNotif = true) {
             actualPlace2: activeRace.actualPlace2 || "",
             actualPlace3: activeRace.actualPlace3 || "",
             actualPlace4: activeRace.actualPlace4 || "",
-            actualWinPayout: defaultWinPayout,
-            actualPlacePayout: defaultPlacePayout,
+            actualWinPayout: 0,
+            actualPlacePayout: 0,
             weights: appliedWeights
         };
-			
-			processAdvancedProbabilityAndValue();
-		
-        let confBadgeHTML = `<span class="text-[11px] px-2 py-0.5 rounded font-bold ${computed.confidenceBadgeClass}">${computed.confidenceText} Confidence</span>`;
-        document.getElementById('confidence-indicator-container').innerHTML = confBadgeHTML;
 
-		let meterHtml = '';
+        if (showNotif) {
+            showNotification(`Predictions refreshed successfully for Race ${window.activeRaceKey}!`);
+        }
+
+        processAdvancedProbabilityAndValue();
+
+        // Enforce Margin / Avg Time sort as default baseline unless manually ordered
+        if (!window.currentComputedResult.isManuallyOrdered) {
+            scoredDogs.sort((a, b) => {
+                let timeA = (a.rawAvgTime !== null && !isNaN(a.rawAvgTime)) ? a.rawAvgTime : 999;
+                let timeB = (b.rawAvgTime !== null && !isNaN(b.rawAvgTime)) ? b.rawAvgTime : 999;
+                return timeA - timeB;
+            });
+        }
+
+        let topPick = scoredDogs[0];
+        let topPickAvgTime = topPick ? topPick.rawAvgTime : null;
+
+        let defaultWinPayout = 0;
+        let defaultPlacePayout = 0;
+        if (activeRace.actualWinner && activeRace.actualWinner.toUpperCase() === topPick.name.toUpperCase()) {
+            defaultWinPayout = topPick.winDiv > 0 ? topPick.winDiv : 2.0;
+            let activeCompetitorsCount = scoredDogs.length;
+            let payoutTier = activeCompetitorsCount >= 8 ? "1,2,3" : (activeCompetitorsCount >= 5 ? "2" : "Pay Win Only");
+            let podium = [activeRace.actualPlace1, activeRace.actualPlace2, activeRace.actualPlace3].map(n => (n || "").toUpperCase());
+            let eligiblePlaceHit = false;
+            if (payoutTier === "1,2,3") {
+                eligiblePlaceHit = podium.slice(0, 3).includes(topPick.name.toUpperCase());
+            } else if (payoutTier === "2") {
+                eligiblePlaceHit = podium.slice(0, 2).includes(topPick.name.toUpperCase());
+            }
+            if (eligiblePlaceHit) {
+                defaultPlacePayout = topPick.placeDiv > 0 ? topPick.placeDiv : 1.2;
+            }
+        }
+        window.currentComputedResult.actualWinPayout = defaultWinPayout;
+        window.currentComputedResult.actualPlacePayout = defaultPlacePayout;
     
-    // Sort descending by blendedWinProb so the UI matches the engine's correct order
-    scoredDogs.sort((a, b) => {
-        let probA = parseFloat(a.blendedWinProb !== undefined ? a.blendedWinProb : (a.winProb || a.softmaxProb || 0));
-        let probB = parseFloat(b.blendedWinProb !== undefined ? b.blendedWinProb : (b.winProb || b.softmaxProb || 0));
-        return probB - probA;
-    });
+        let meterHtml = '';
+        scoredDogs.forEach((dog, idx) => {
+            let rank = idx + 1;
+            let colorClass = rank === 1 ? 'text-green-600 dark:text-green-400 font-black' : (rank === 2 ? 'text-yellow-600 dark:text-yellow-400 font-bold' : 'text-slate-700 dark:text-slate-300 font-medium');
+            let barColor = rank === 1 ? 'bg-green-500' : (rank === 2 ? 'bg-yellow-400' : 'bg-slate-400 dark:bg-slate-600');
+            let sexIcon = dog.sex === 'Dog' ? '🐶' : (dog.sex === 'Bitch' ? '🐾' : '');
+            
+            let rawProb = dog.softmaxProb !== undefined ? dog.softmaxProb : (dog.winProb || 0);
+            let probVal = parseFloat(rawProb).toFixed(1);
+            let ratingVal = (dog.ratingOutOf100 !== undefined && dog.ratingOutOf100 !== null) ? dog.ratingOutOf100 : rank;
 
-    scoredDogs.forEach((dog, idx) => {
-        let colorClass = idx === 0 ? 'text-green-600 dark:text-green-400 font-black' : (idx === 1 ? 'text-yellow-600 dark:text-yellow-400 font-bold' : 'text-slate-700 dark:text-slate-300 font-medium');
-        let barColor = idx === 0 ? 'bg-green-500' : (idx === 1 ? 'bg-yellow-400' : 'bg-slate-400 dark:bg-slate-600');
-        let sexIcon = dog.sex === 'Dog' ? '🐶' : (dog.sex === 'Bitch' ? '🐾' : '');
-        
-        // Use blendedWinProb as the primary probability display
-        let rawProb = dog.blendedWinProb !== undefined ? dog.blendedWinProb : (dog.winProb || 0);
-        let probVal = parseFloat(rawProb).toFixed(1);
+            let lengthsText = "0.0L";
+            if (idx === 0) {
+                lengthsText = "Top Pick";
+            } else if (topPickAvgTime !== null && dog.rawAvgTime !== null && !isNaN(topPickAvgTime) && !isNaN(dog.rawAvgTime)) {
+                let timeDiff = dog.rawAvgTime - topPickAvgTime;
+                let lengths = timeDiff / 0.07;
+                let sign = timeDiff > 0 ? "+" : "";
+                lengthsText = `${sign}${lengths.toFixed(1)}L`;
+            }
 
-            let manualControls = `
-                <div class="flex items-center gap-1 ml-2 inline-flex">
-                    <button onclick="movePredictionRank(${idx}, -1)" ${idx === 0 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"'}>▲</button>
-                    <button onclick="movePredictionRank(${idx}, 1)" ${idx === scoredDogs.length - 1 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"'}>▼</button>
-                </div>
-            `;
+            let manualControls = '<div class="flex items-center gap-1 ml-1 inline-flex">' +
+            '<button onclick="movePredictionRank(' + idx + ', -1)" ' + (idx === 0 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"') + '>▲</button>' +
+            '<button onclick="movePredictionRank(' + idx + ', 1)" ' + (idx === scoredDogs.length - 1 ? 'disabled class="opacity-20 cursor-not-allowed text-[10px] px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded"' : 'class="text-[10px] px-1 py-0.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 rounded font-bold cursor-pointer"') + '>▼</button>' +
+            '</div>';
 
-            meterHtml += `
-                <div class="space-y-1 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
-                    <div class="flex justify-between items-center text-sm">
-                        <div class="flex items-center gap-1">
-                            <span class="${colorClass}">${idx + 1}. ${dog.name} ${sexIcon} <span class="text-xs font-mono text-slate-400">(B${dog.officialBox || dog.box})</span></span>
-                            ${manualControls}
-                        </div>
-                        <span class="font-mono font-bold text-xs">${probVal}%</span>
-                    </div>
-                    <div class="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
-                        <div class="${barColor} h-2 rounded-full transition-all duration-500" style="width: ${probVal}%"></div>
-                    </div>
-                </div>
-            `;
+            meterHtml += '<div class="space-y-1 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">' +
+            '<div class="flex flex-wrap justify-between items-center gap-2 text-sm">' +
+            '<div class="flex items-center gap-1.5 flex-wrap">' +
+            '<span class="' + colorClass + '">' + rank + '. ' + dog.name + ' ' + sexIcon + ' <span class="text-xs font-mono text-slate-400">(B' + (dog.officialBox || dog.box) + ')</span></span>' +
+            '<span class="bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-bold px-1.5 py-0.5 rounded border border-indigo-200 dark:border-indigo-800 text-xs font-mono" title="Margin vs Top Pick">' + lengthsText + '</span>' +
+            '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black font-mono bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 ml-1"><span class="text-red-500">&#9733;</span> ' + ratingVal + '</span>' +
+            manualControls +
+            '</div>' +
+            '<div class="flex items-center gap-2 font-mono text-xs">' +
+            '<span class="font-bold text-slate-900 dark:text-white">' + probVal + '%</span>' +
+            '</div>' +
+            '</div>' +
+            '<div class="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">' +
+            '<div class="' + barColor + ' h-2 rounded-full transition-all duration-500" style="width: ' + probVal + '%"></div>' +
+            '</div>' +
+            '</div>';
         });
-
-		if (!window.currentComputedResult || !window.currentComputedResult.isManuallyOrdered) {
-				scoredDogs.sort((a, b) => {
-					let probA = parseFloat(a.blendedWinProb !== undefined ? a.blendedWinProb : (a.winProb || a.softmaxProb || 0));
-					let probB = parseFloat(b.blendedWinProb !== undefined ? b.blendedWinProb : (b.winProb || b.softmaxProb || 0));
-					return probB - probA;
-				});
-			}
 
         document.getElementById('probability-win-meter-container').innerHTML = meterHtml;
 
-        // Add a reset button if manually ordered
         if (window.currentComputedResult.isManuallyOrdered) {
-            meterHtml += `<div class="mt-2 text-right"><button onclick="resetPredictionManualOrder()" class="text-[11px] text-purple-600 dark:text-purple-400 font-bold hover:underline">🔄 Reset Manual Order</button></div>`;
-            document.getElementById('probability-win-meter-container').innerHTML = meterHtml;
+            let resetHtml = meterHtml + `<div class="mt-2 text-right"><button onclick="resetPredictionManualOrder()" class="text-[11px] text-purple-600 dark:text-purple-400 font-bold hover:underline">🔄 Reset Manual Order</button></div>`;
+            document.getElementById('probability-win-meter-container').innerHTML = resetHtml;
         }
         
-        let topSexIcon = scoredDogs[0].sex === 'Dog' ? '🐶' : (scoredDogs[0].sex === 'Bitch' ? '🐾' : '');
-        document.getElementById('winning-dog-name').innerText = `${scoredDogs[0].name} ${topSexIcon}`;
-        document.getElementById('winning-dog-desc').innerText = `Based on Softmax probability calibration, outlier-filtered times, traffic mapping, and recency form decay, ${scoredDogs[0].name} leads the distribution at ${scoredDogs[0].winProb.toFixed(1)}%.`;
-        
-        let topPickAvgTime = scoredDogs[0].rawAvgTime;
+		let topSexIcon = scoredDogs[0].sex === 'Dog' ? '🐶' : (scoredDogs[0].sex === 'Bitch' ? '🐾' : '');
 
+        // 1. Update Top Pick Title & Box Badge
+        document.getElementById('top-pick-title').innerText = `Top Pick: ${topPick.name.toUpperCase()} ${topSexIcon}`;
+        document.getElementById('top-pick-box-badge').innerText = `Box ${topPick.officialBox || topPick.box || '?'}`;
+
+        // 2. Update Description
+        document.getElementById('winning-dog-desc').innerText = `Based on Softmax probability calibration, outlier-filtered times, traffic mapping, and recency form decay, ${topPick.name} leads the distribution at ${topPick.winProb.toFixed(1)}%.`;
+
+        // 3. Build Actionable Betting Metrics Strip & Quick Bet Button
+        let evVal = topPick.expectedValuePercent !== undefined ? topPick.expectedValuePercent : 0;
+        let valueBadge = evVal >= 8.0 ? `<span class="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 font-bold">🟢 +${evVal.toFixed(1)}% EV</span>` : '';
+
+        let encodedTopName = encodeURIComponent(topPick.name);
+        let encodedTopRaceKey = encodeURIComponent(window.activeRaceKey);
+
+        let metricsHtml = `
+            <span class="text-slate-600 dark:text-slate-300">Win: <strong class="text-slate-900 dark:text-white text-sm">$${topPick.winDiv || '0.00'}</strong></span>
+            <span class="text-slate-400">|</span>
+            <span class="text-slate-600 dark:text-slate-300">Place: <strong class="text-slate-900 dark:text-white text-sm">$${topPick.placeDiv || '0.00'}</strong></span>
+            ${valueBadge}
+            <button onclick="openPlaceBetModal('${encodedTopName}', '${encodedTopRaceKey}', '${activeRace.raceNumber || 1}', ${topPick.winDiv || 0}, ${topPick.placeDiv || 0})" 
+                class="ml-auto bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-2.5 rounded text-xs transition-colors shadow inline-flex items-center gap-1">
+                💰 Bet Top Pick
+            </button>
+        `;
+
+        document.getElementById('top-pick-metrics').innerHTML = metricsHtml;
+        
         let validWinDivs = scoredDogs.map(d => parseFloat(d.winDiv) || 0).filter(div => div > 0);
         let lowestWinDiv = validWinDivs.length > 0 ? Math.min(...validWinDivs) : 0;
 
@@ -3502,88 +3735,81 @@ async function refreshPredictions(showNotif = true) {
             }
         }
 
-let analysisHtml = '';
-		scoredDogs.forEach((dog, index) => {
-			let sexBadge = dog.sex === 'Dog' ? '<span class="text-blue-600 dark:text-blue-400 text-xs font-bold ml-1">🐶</span>' : (dog.sex === 'Bitch' ? '<span class="text-pink-600 dark:text-pink-400 text-xs font-bold ml-1">🐾</span>' : '');
-			let sparkline = generateSparkline(dog.formArray);
-			
-			// --- DECLARE daysSinceText HERE ---
-			let daysSinceText = (dog.daysSinceLastRun !== null && dog.daysSinceLastRun !== undefined) 
-				? `<span class="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1 block">⏱️ Days Since Last Run: <strong class="text-slate-800 dark:text-slate-200">${dog.daysSinceLastRun} days</strong> (${dog.recencyText || ''})</span>` 
-				: `<span class="text-xs font-mono text-slate-400 mt-1 block">⏱️ Days Since Last Run: N/A</span>`;
-			// -----------------------------------
+        let analysisHtml = '';
+        
+        // Runner Analysis cards permanently locked in Box order lowest to highest
+        let boxSortedDogs = [...scoredDogs].sort((a, b) => {
+            let boxA = parseInt(a.officialBox || a.box || 99);
+            let boxB = parseInt(b.officialBox || b.box || 99);
+            return boxA - boxB;
+        });
 
-			let ratingBadge = dog.ratingOutOf100 !== undefined ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black font-mono bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 ml-2"><span class="text-red-500">&#9733;</span> ${dog.ratingOutOf100}</span>` : '';
-			
-			let isFavorite = favoriteDogName !== "" && dog.name.toUpperCase() === favoriteDogName;
-			let favoriteBadge = isFavorite ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 ml-2">⭐ Favorite</span>` : '';
-
-			let pirBadge = getRunningStyleBadge(parseFloat(dog.avgEarly), parseFloat(dog.avgGain));
-			let boxBiasBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">📦 Box ${dog.officialBox}: +${dog.boxBiasBonus.toFixed(1)}</span>`;
-			let trafficBadge = dog.trafficPenalty !== 0 ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800">🚦 Traffic Penalty: ${dog.trafficPenalty > 0 ? '+' : ''}${dog.trafficPenalty}</span>` : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">🚦 Clean Map</span>`;
-
-            let marginDisplay = "";
-            if (index === 0) {
-                marginDisplay = '<span class="text-green-600 dark:text-green-400 font-bold">Top Pick</span>';
-            } else if (topPickAvgTime !== null && dog.rawAvgTime !== null && !isNaN(topPickAvgTime) && !isNaN(dog.rawAvgTime)) {
-                let timeDiff = dog.rawAvgTime - topPickAvgTime;
-                let lengths = timeDiff / 0.07;
-                let sign = timeDiff >= 0 ? "+" : "";
-                marginDisplay = `Margin vs Top: <strong class="font-mono text-slate-800 dark:text-slate-200">${sign}${timeDiff.toFixed(2)}s (${sign}${lengths.toFixed(1)}L)</strong>`;
-            } else {
-                marginDisplay = `Margin vs Top: <span class="text-slate-400 font-mono">N/A</span>`;
-            }
-
-            let bgColor = "bg-white dark:bg-slate-900";
-            let borderColor = "border-slate-200 dark:border-slate-800";
-            let rankDisplay = `<strong class="text-lg text-slate-800 dark:text-white">${index + 1}. ${dog.name}</strong>`;
+        boxSortedDogs.forEach((dog, index) => {
+            let sexBadge = dog.sex === 'Dog' ? '<span class="text-blue-600 dark:text-blue-400 text-xs font-bold ml-1">🐶</span>' : (dog.sex === 'Bitch' ? '<span class="text-pink-600 dark:text-pink-400 text-xs font-bold ml-1">🐾</span>' : '');
+            let sparkline = generateSparkline(dog.formArray);
             
-            if (index === 0) { 
-                bgColor = "bg-[#dcfce7] dark:bg-green-950/40"; borderColor = "border-[#86efac] dark:border-green-800";
-                rankDisplay = `<strong class="text-lg text-green-900 dark:text-green-200 font-black">${index + 1}. ${dog.name} <span class="text-xs uppercase bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 px-1 py-0.5 ml-1 rounded">Top Pick</span></strong>`;
-            } else if (index === 1) { 
-                bgColor = "bg-[#fef08a] dark:bg-yellow-950/40"; borderColor = "border-[#fde047] dark:border-yellow-800";
-                rankDisplay = `<strong class="text-lg text-yellow-900 dark:text-yellow-200 font-black">${index + 1}. ${dog.name}</strong>`;
-            } else if (index === 2) { 
-                bgColor = "bg-[#ffedd5] dark:bg-orange-950/40"; borderColor = "border-[#fdba74] dark:border-orange-800";
-                rankDisplay = `<strong class="text-lg text-orange-900 dark:text-orange-200 font-black">${index + 1}. ${dog.name}</strong>`;
-            }
+            let daysSinceText = (dog.daysSinceLastRun !== null && dog.daysSinceLastRun !== undefined) 
+                ? `<span class="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1 block">⏱️ Days Since Last Run: <strong class="text-slate-800 dark:text-slate-200">${dog.daysSinceLastRun} days</strong> (${dog.recencyText || ''})</span>` 
+                : `<span class="text-xs font-mono text-slate-400 mt-1 block">⏱️ Days Since Last Run: N/A</span>`;
 
-			let encodedName = encodeURIComponent(dog.name);
+            let ratingBadge = dog.ratingOutOf100 !== undefined ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black font-mono bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 ml-2"><span class="text-red-500">&#9733;</span> ${dog.ratingOutOf100}</span>` : '';
+            
+            let isFavorite = favoriteDogName !== "" && dog.name.toUpperCase() === favoriteDogName;
+            let favoriteBadge = isFavorite ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 ml-2">⭐ Favorite</span>` : '';
+
+            let pirBadge = getRunningStyleBadge(parseFloat(dog.avgEarly), parseFloat(dog.avgGain));
+            let boxBiasBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">📦 Box ${dog.officialBox}: +${dog.boxBiasBonus.toFixed(1)}</span>`;
+            let trafficBadge = dog.trafficPenalty !== 0 ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800">🚦 Traffic Penalty: ${dog.trafficPenalty > 0 ? '+' : ''}${dog.trafficPenalty}</span>` : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">🚦 Clean Map</span>`;
+
+            let currentRank = scoredDogs ? scoredDogs.findIndex(d => d.name === dog.name) : -1;
+            let isTopPickCard = (currentRank === 0);
+            
+            let marginDisplay = isTopPickCard 
+                ? '<span class="text-green-600 dark:text-green-400 font-bold">Top Pick</span>'
+                : (topPickAvgTime !== null && dog.rawAvgTime !== null && !isNaN(topPickAvgTime) && !isNaN(dog.rawAvgTime))
+                    ? (() => {
+                        let timeDiff = dog.rawAvgTime - topPickAvgTime;
+                        let lengths = timeDiff / 0.07;
+                        let sign = timeDiff >= 0 ? "+" : "";
+                        return `Margin vs Top: <strong class="font-mono text-slate-800 dark:text-slate-200">${sign}${timeDiff.toFixed(2)}s (${sign}${lengths.toFixed(1)}L)</strong>`;
+                    })()
+                    : `Margin vs Top: <span class="text-slate-400 font-mono">N/A</span>`;
+
+            let bgColor = currentRank === 0 ? "bg-[#dcfce7] dark:bg-green-950/40" : currentRank === 1 ? "bg-[#fef3c7] dark:bg-amber-950/40" : currentRank === 2 ? "bg-[#fee2e2] dark:bg-rose-950/40" : "bg-white dark:bg-slate-900";
+            let borderColor = currentRank === 0 ? "border-[#86efac] dark:border-green-800" : currentRank === 1 ? "border-[#fde047] dark:border-amber-800" : currentRank === 2 ? "border-[#fca5a5] dark:border-rose-800" : "border-slate-200 dark:border-slate-800";
+
+            let encodedName = encodeURIComponent(dog.name);
             let encodedRaceKey = encodeURIComponent(window.activeRaceKey);
             let evVal = dog.expectedValuePercent !== undefined ? dog.expectedValuePercent : 0;
             let valueBadge = evVal >= 8.0 ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">🟢 VALUE (+${evVal.toFixed(1)}% EV)</span>` : '';
 
-			analysisHtml += `
-              <li class="runner-card ${bgColor} p-4 border ${borderColor} rounded-lg shadow-sm flex flex-col md:flex-row md:justify-between mb-3 transition-colors">
+            analysisHtml += `
+                <li class="runner-card ${bgColor} p-4 border ${borderColor} rounded-lg shadow-sm flex flex-col md:flex-row md:justify-between mb-3 transition-colors">
                     <div class="mb-2 md:mb-0 flex flex-col justify-center">
                         <div class="flex items-center flex-wrap gap-2">
-                            <!-- H2H Comparison Checkbox -->
                             <input type="checkbox" class="h2h-checkbox w-4 h-4 text-blue-600 rounded cursor-pointer" data-dog-name="${dog.name}" onchange="handleH2HSelection(this)" title="Select for Head-to-Head Comparison">
-
-                            <!-- SAFE: Uses class and data attribute instead of inline onclick -->
-                            <strong data-dog-name="${encodedName}" class="dog-name-click text-lg ${index === 0 ? 'text-green-900 dark:text-green-200 font-black cursor-pointer hover:text-blue-600 dark:hover:text-blue-400': 'text-slate-800 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400'}">
-                                ${index + 1}. ${dog.name}
+                            <strong data-dog-name="${encodedName}" class="dog-name-click text-lg ${isTopPickCard ? 'text-green-900 dark:text-green-200 font-black cursor-pointer hover:text-blue-600 dark:hover:text-blue-400': 'text-slate-800 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400'}">
+                                ${dog.name}
                             </strong> 
                             ${sexBadge} 
                             <span class="text-sm font-mono text-slate-500 dark:text-slate-400 font-bold ml-1">(Box ${dog.officialBox})</span> 
-                            ${ratingBadge} 
                             ${favoriteBadge}
                         </div>
-                        <div class="mt-2 flex flex-col gap-1">
+                        <div class="mt-2 flex flex-col gap-2">
                             <div class="flex items-center gap-2">
                                 <span class="text-xs text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">Form:</span>
                                 ${sparkline}
                             </div>
                             ${daysSinceText}
+                            <div class="mt-1">
+                                <button data-dog-name="${encodedName}" data-race-key="${encodedRaceKey}" data-race-num="${activeRace.raceNumber || 1}" data-win-div="${dog.winDiv}" data-place-div="${dog.placeDiv}" class="bet-btn bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded text-xs shadow transition-colors inline-flex items-center gap-1">💰 Bet</button>
+                            </div>
                         </div>
                     </div>
                     <div class="text-sm text-slate-700 dark:text-slate-300 md:text-right flex flex-col items-start md:items-end justify-center gap-1.5">
                         <div class="flex items-center gap-1.5 flex-wrap">${pirBadge} ${boxBiasBadge} ${trafficBadge} ${valueBadge}</div>
-                        
                         <div class="flex items-center gap-2 flex-wrap">
                             <span class="block">Win Div: <strong class="text-slate-900 dark:text-white font-mono text-base">$${dog.winDiv}</strong> | Place Div: <strong class="text-slate-900 dark:text-white font-mono text-base">$${dog.placeDiv}</strong> | Softmax Prob: <strong class="text-green-700 dark:text-green-400 font-mono">${dog.winProb.toFixed(1)}%</strong></span>
-                           <button data-dog-name="${encodedName}" data-race-key="${encodedRaceKey}" data-race-num="${activeRace.raceNumber || 1}" data-win-div="${dog.winDiv}" data-place-div="${dog.placeDiv}" class="bet-btn bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-2.5 rounded text-xs shadow transition-colors">💰 Bet</button>
                         </div>
                         <span class="block text-slate-500 dark:text-slate-400 text-xs mt-1"><strong>Avg Time: <span class="font-mono text-slate-800 dark:text-slate-200">${dog.avgTrackDistTime}s</span></strong> | <strong>Avg 1Sec: <span class="font-mono text-slate-800 dark:text-slate-200">${dog.avgTrackDistSplit}s</span></strong> | ${marginDisplay}</span>
                         <span class="block text-slate-400 dark:text-slate-500 text-[11px]">Early Pos: ${dog.avgEarly} | Gain: <strong class="text-green-600 dark:text-green-400">+${dog.avgGain}</strong> | Best Time: <span class="font-mono">${dog.bestTime}s</span> | Best 1Sec: <span class="font-mono">${dog.best1Sec}s</span></span>
@@ -3605,19 +3831,18 @@ let analysisHtml = '';
             });
         }
 
-		document.getElementById('runner-analysis-list').innerHTML = analysisHtml;
-		document.querySelectorAll('.dog-name-click').forEach(el => {
-		el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        let encodedName = e.currentTarget.getAttribute('data-dog-name');
-        openScoreBreakdownModal(encodedName);
-    });
-});
+        document.getElementById('runner-analysis-list').innerHTML = analysisHtml;
+        document.querySelectorAll('.dog-name-click').forEach(el => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                let encodedName = e.currentTarget.getAttribute('data-dog-name');
+                openScoreBreakdownModal(encodedName);
+            });
+        });
 
-        // Attach safe click listeners to all bet buttons (prevents apostrophe syntax errors)
         document.querySelectorAll('.bet-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                e.stopPropagation(); // Prevents card breakdown modal from opening when clicking bet
+                e.stopPropagation(); 
                 let dName = decodeURIComponent(btn.getAttribute('data-dog-name'));
                 let tKey = decodeURIComponent(btn.getAttribute('data-race-key'));
                 let rNum = btn.getAttribute('data-race-num');
@@ -3628,7 +3853,7 @@ let analysisHtml = '';
         });
 
         renderBatchSummaryDashboard();
-		
+        
         if (showNotif) {
             showNotification("Predictions updated successfully!", "success");
         }
@@ -3636,6 +3861,50 @@ let analysisHtml = '';
         if (showNotif) {
             showNotification("Not enough active runners found to calculate a prediction.");
         }
+    }
+}
+
+function updateTopPickCard() {
+    let scoredDogs = window.currentScoredDogs;
+    let activeRace = window.allRaceMeetings[window.activeRaceKey];
+    
+    if (!scoredDogs || scoredDogs.length === 0) return;
+
+    let topPick = scoredDogs[0];
+    let topSexIcon = topPick.sex === 'Dog' ? '🐶' : (topPick.sex === 'Bitch' ? '🐾' : '');
+
+    // 1. Update Title & Box Badge
+    let titleElem = document.getElementById('top-pick-title');
+    let boxElem = document.getElementById('top-pick-box-badge');
+    if (titleElem) titleElem.innerText = `Top Pick: ${topPick.name.toUpperCase()} ${topSexIcon}`;
+    if (boxElem) boxElem.innerText = `Box ${topPick.officialBox || topPick.box || '?'}`;
+
+    // 2. Update Description
+    let descElem = document.getElementById('winning-dog-desc');
+    if (descElem) {
+        descElem.innerText = `Based on Softmax probability calibration, outlier-filtered times, traffic mapping, and recency form decay, ${topPick.name} leads the distribution at ${(topPick.softmaxProb !== undefined ? topPick.softmaxProb : topPick.winProb).toFixed(1)}%.`;
+    }
+
+    // 3. Update Betting Metrics Strip & Quick Bet Button
+    let metricsElem = document.getElementById('top-pick-metrics');
+    if (metricsElem) {
+        let evVal = topPick.expectedValuePercent !== undefined ? topPick.expectedValuePercent : 0;
+        let valueBadge = evVal >= 8.0 ? `<span class="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 font-bold">🟢 +${evVal.toFixed(1)}% EV</span>` : '';
+
+        let encodedTopName = encodeURIComponent(topPick.name);
+        let encodedTopRaceKey = encodeURIComponent(window.activeRaceKey);
+        let raceNum = activeRace ? (activeRace.raceNumber || 1) : 1;
+
+        metricsElem.innerHTML = `
+            <span class="text-slate-600 dark:text-slate-300">Win: <strong class="text-slate-900 dark:text-white text-sm">$${topPick.winDiv || '0.00'}</strong></span>
+            <span class="text-slate-400">|</span>
+            <span class="text-slate-600 dark:text-slate-300">Place: <strong class="text-slate-900 dark:text-white text-sm">$${topPick.placeDiv || '0.00'}</strong></span>
+            ${valueBadge}
+            <button onclick="openPlaceBetModal('${encodedTopName}', '${encodedTopRaceKey}', '${raceNum}', ${topPick.winDiv || 0}, ${topPick.placeDiv || 0})" 
+                class="ml-auto bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-2.5 rounded text-xs transition-colors shadow inline-flex items-center gap-1">
+                💰 Bet Top Pick
+            </button>
+        `;
     }
 }
 
@@ -3757,6 +4026,19 @@ async function saveCurrentPredictions() {
     renderSavedPredictions();
     updateAllUIComponents();
     showNotification("Predictions successfully saved & synced!", "success");
+}
+
+function extractTrackNameFromSaved(item) {
+    if (!item || !item.trackName) return "";
+    // Strips out dates, race numbers, and extras to isolate the track name
+    let clean = item.trackName.replace(/RACE\s*\d+/gi, "").replace(/\d{2}[./-]\d{2}[./-]\d{4}|\d{8}/g, "").trim();
+    return clean || item.trackName;
+}
+
+function extractDateFromSaved(item) {
+    if (!item || !item.trackName) return "";
+    let match = item.trackName.match(/(\d{2}[./-]\d{2}[./-]\d{4}|\d{8})/);
+    return match ? match[1].replace(/\D/g, "") : "";
 }
 
 async function updateActualWinner(index, winnerName) {
@@ -4718,9 +5000,7 @@ function showSavedPredictionDetails(index) {
         let sexBadge = dog.sex === 'Dog' ? '<span class="text-blue-600 dark:text-blue-400 text-xs font-bold ml-1">🐶</span>' : (dog.sex === 'Bitch' ? '<span class="text-pink-600 dark:text-pink-400 text-xs font-bold ml-1">🐾</span>' : '');
         let sparkline = generateSparkline(dog.formArray || []);
         let daysSinceText = dog.daysSinceLastRun !== null && dog.daysSinceLastRun !== undefined ? `<span class="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1 block">⏱️ Days Since Last Run: <strong class="text-slate-800 dark:text-slate-200">${dog.daysSinceLastRun} days</strong> (${dog.recencyText || 'Standard form recency'})</span>` : `<span class="text-xs font-mono text-slate-400 mt-1 block">⏱️ Days Since Last Run: N/A (CSV Import/Missing)</span>`;
-        
-        let ratingBadge = dog.ratingOutOf100 !== undefined ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black font-mono bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 ml-2"><span class="text-red-500">&#9733;</span> ${dog.ratingOutOf100}</span>` : '';
-        
+                      
         let isFavorite = favoriteDogName !== "" && dog.name.toUpperCase() === favoriteDogName;
         let favoriteBadge = isFavorite ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 ml-2">⭐ Favorite</span>` : '';
 
@@ -4762,7 +5042,8 @@ function showSavedPredictionDetails(index) {
         }
         
         let winProbVal = dog.winProb !== undefined && !isNaN(dog.winProb) ? dog.winProb.toFixed(1) + "%" : "N/A";
-        
+        let ratingBadge = (dog.ratingOutOf100 !== undefined && dog.ratingOutOf100 !== null) ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black font-mono bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 ml-2"><span class="text-red-500">&#9733;</span> ${dog.ratingOutOf100}</span>` : '';
+		
         analysisHtml += `
             <li class="${bgColor} p-4 border ${borderColor} rounded-lg shadow-sm flex flex-col md:flex-row md:justify-between mb-3 transition-colors">
                 <div class="mb-2 md:mb-0 flex flex-col justify-center">
