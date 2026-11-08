@@ -331,7 +331,14 @@
 				                
 				<div class="grid grid-cols-1 md:grid-cols-12 gap-4 mb-6">
 								<div class="md:col-span-8 bg-slate-50 dark:bg-slate-800 p-4 sm:p-5 rounded-lg border border-slate-200 dark:border-slate-700">
-									<h3 class="text-base sm:text-lg font-bold text-slate-900 dark:text-white mb-3">🏆 Win Probabilities</h3>
+									<!-- Header with Toggle Button on the Right -->
+									<div class="flex justify-between items-center mb-3">
+										<h3 class="text-base sm:text-lg font-bold text-slate-900 dark:text-white">🏆 Win Probabilities</h3>
+										<button id="toggle-prob-sort-btn" onclick="toggleProbabilitySortOrder()" class="text-xs font-bold px-2.5 py-1 rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 transition-colors flex items-center gap-1 shadow-sm">
+											📊 Sort by Prob %
+										</button>
+									</div>
+									
 									<div id="probability-win-meter-container" class="space-y-2.5 text-xs sm:text-sm">
 										<div class="text-slate-400 italic">Pending Reanalysis...</div>
 									</div>

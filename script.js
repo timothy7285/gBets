@@ -1009,7 +1009,7 @@ function parseTxtData(lines, filename) {
             }
         }
 
-        if (inStarters && currentLine.length > 3 && !currentLine.startsWith('number')) {
+if (inStarters && currentLine.length > 3 && !currentLine.startsWith('number')) {
             const parts = currentLine.split(',').map(p => p.replace(/[\r"]/g, '').trim());
             
             let getCol = (colName, fallbackIdx) => {
@@ -1036,7 +1036,8 @@ function parseTxtData(lines, filename) {
             let trainer = getCol('statername2', 4) || getCol('trainer', 4) || "";
             let isScratched = getCol('scratched', 7).toLowerCase() === 'true';
             
-            let placingStr = getCol('placing', 9);
+            // Look up both 'placing' and 'place' column headers from the TABtouch export
+            let placingStr = getCol('placing', 9) || getCol('place', 9);
             let placingVal = parseInt(placingStr) || 0;
 
             starters.push({
@@ -1052,7 +1053,7 @@ function parseTxtData(lines, filename) {
                 placing: placingVal
             });
 
-            // Explicitly map placing numbers to podium positions
+            // Explicitly map placing numbers to podium/result positions
             if (placingVal === 1) {
                 parsedActualWinner = cleanDogName;
                 parsedActualPlace1 = cleanDogName;
@@ -1064,6 +1065,26 @@ function parseTxtData(lines, filename) {
                 parsedActualPlace4 = cleanDogName;
             }
         }
+    }
+
+    // Comprehensive fallback pass: scan starters array directly if individual parsed vars missed anything
+    if (!parsedActualPlace1) {
+        let d = starters.find(s => s.placing === 1);
+        if (d) parsedActualPlace1 = d.starterName;
+    }
+    if (!parsedActualWinner && parsedActualPlace1) parsedActualWinner = parsedActualPlace1;
+
+    if (!parsedActualPlace2) {
+        let d = starters.find(s => s.placing === 2);
+        if (d) parsedActualPlace2 = d.starterName;
+    }
+    if (!parsedActualPlace3) {
+        let d = starters.find(s => s.placing === 3);
+        if (d) parsedActualPlace3 = d.starterName;
+    }
+    if (!parsedActualPlace4) {
+        let d = starters.find(s => s.placing === 4);
+        if (d) parsedActualPlace4 = d.starterName;
     }
 
     if (!raceDistance) {
@@ -1199,13 +1220,14 @@ async function checkAutoFillPostRaceResults() {
                     savedItem.actualWinPayout = 0;
                 }
 
-                let podium = [matchingMeeting.actualPlace1, matchingMeeting.actualPlace2, matchingMeeting.actualPlace3].map(n => (n || "").toUpperCase());
-                let eligiblePlaceHit = false;
-                if (payoutTier === "1,2,3") {
-                    eligiblePlaceHit = podium.slice(0, 3).includes(topPickName.toUpperCase());
-                } else if (payoutTier === "2") {
-                    eligiblePlaceHit = podium.slice(0, 2).includes(topPickName.toUpperCase());
-                }
+                let podium = [matchingMeeting.actualPlace1, matchingMeeting.actualPlace2, matchingMeeting.actualPlace3, matchingMeeting.actualPlace4].map(n => (n || "").toUpperCase());
+				let eligiblePlaceHit = false;
+
+				if (payoutTier === "1,2,3,4" || payoutTier === "1,2,3") { // Adjust tiers as needed
+					eligiblePlaceHit = podium.slice(0, 4).includes(topPickName.toUpperCase()); // slice up to 4 if tracking top 4
+				} else if (payoutTier === "2") {
+					eligiblePlaceHit = podium.slice(0, 2).includes(topPickName.toUpperCase());
+				}
 
                 if (eligiblePlaceHit) {
                     let topPickStarter = matchingMeeting.starters.find(s => s.starterName.toUpperCase() === topPickName.toUpperCase());
@@ -1354,6 +1376,12 @@ async function checkAutoFillPostRaceResults() {
 
 async function syncResultsWithSavedHistory() {
     await checkAutoFillPostRaceResults();
+    if (typeof sortAndPersistMeetingsObject === 'function') {
+        await sortAndPersistMeetingsObject();
+    } else {
+        localStorage.setItem('savedPredictions', JSON.stringify(window.savedPredictions));
+    }
+
     populateSavedFilterDropdowns();
     renderSavedPredictions();
     renderBettingTab();
@@ -3120,7 +3148,7 @@ function updateWinMeterAndRunnerCards() {
             lengthsText = "Top Pick";
         } else if (baselineAvgTime !== null && dog.rawAvgTime !== null && !isNaN(baselineAvgTime) && !isNaN(dog.rawAvgTime)) {
             let timeDiff = dog.rawAvgTime - baselineAvgTime;
-            let lengths = timeDiff / 0.07;
+            let lengths = timeDiff / 0.0667;
             let sign = timeDiff > 0 ? "+" : "";
             lengthsText = `${sign}${lengths.toFixed(1)}L`;
         }
@@ -3203,7 +3231,7 @@ function updateWinMeterAndRunnerCards() {
             marginDisplay = '<span class="text-green-600 dark:text-green-400 font-bold">Top Pick</span>';
         } else if (baselineAvgTime !== null && dog.rawAvgTime !== null && !isNaN(baselineAvgTime) && !isNaN(dog.rawAvgTime)) {
             let timeDiff = dog.rawAvgTime - baselineAvgTime;
-            let lengths = timeDiff / 0.07;
+            let lengths = timeDiff / 0.0667;
             let sign = timeDiff >= 0 ? "+" : "";
             marginDisplay = `Margin vs Top: <strong class="font-mono text-slate-800 dark:text-slate-200">${sign}${timeDiff.toFixed(2)}s (${sign}${lengths.toFixed(1)}L)</strong>`;
         } else {
@@ -3303,7 +3331,7 @@ function renderWinProbabilitiesMeter() {
     let scoredDogs = window.currentComputedResult.scoredDogs;
 
     // 1. Enforce default Margin / Avg Time sort on load unless manually locked
-    if (!window.currentComputedResult.isManuallyOrdered) {
+		if (!window.currentComputedResult.isManuallyOrdered) {
         scoredDogs.sort((a, b) => {
             let timeA = (a.rawAvgTime !== null && !isNaN(a.rawAvgTime)) ? a.rawAvgTime : 999;
             let timeB = (b.rawAvgTime !== null && !isNaN(b.rawAvgTime)) ? b.rawAvgTime : 999;
@@ -3328,6 +3356,8 @@ function renderWinProbabilitiesMeter() {
         
         let rawProb = dog.softmaxProb !== undefined ? dog.softmaxProb : 0;
         let probVal = parseFloat(rawProb).toFixed(1);
+		let ratingVal = (dog.ratingOutOf100 !== undefined && dog.ratingOutOf100 !== null) ? dog.ratingOutOf100 : rank;
+        let ratingBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-black font-mono bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 ml-1"><span class="text-red-500">&#9733;</span> ${ratingVal}</span>`;
 
         // Calculate lengths relative to top pick
         let lengthsText = "0.0L";
@@ -3335,7 +3365,7 @@ function renderWinProbabilitiesMeter() {
             lengthsText = "Top Pick";
         } else if (topPickAvgTime !== null && dog.rawAvgTime !== null && !isNaN(dog.rawAvgTime)) {
             let timeDiff = dog.rawAvgTime - topPickAvgTime;
-            let lengths = timeDiff / 0.07;
+            let lengths = timeDiff / 0.0667;
             let sign = timeDiff > 0 ? "+" : "";
             lengthsText = `${sign}${lengths.toFixed(1)}L`;
         }
@@ -3350,6 +3380,7 @@ function renderWinProbabilitiesMeter() {
             '<div class="flex items-center gap-1.5 flex-wrap">' +
             '<span class="' + colorClass + '">' + rank + '. ' + dog.name + ' ' + sexIcon + ' <span class="text-xs font-mono text-slate-400">(B' + (dog.officialBox || dog.box) + ')</span></span>' +
             '<span class="bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-bold px-1.5 py-0.5 rounded border border-indigo-200 dark:border-indigo-800 text-xs font-mono" title="Margin vs Top Pick">' + lengthsText + '</span>' +
+			ratingBadge +
             manualControls +
             '</div>' +
             '<div class="flex items-center gap-2 font-mono text-xs">' +
@@ -3653,7 +3684,7 @@ async function refreshPredictions(showNotif = true) {
                 lengthsText = "Top Pick";
             } else if (topPickAvgTime !== null && dog.rawAvgTime !== null && !isNaN(topPickAvgTime) && !isNaN(dog.rawAvgTime)) {
                 let timeDiff = dog.rawAvgTime - topPickAvgTime;
-                let lengths = timeDiff / 0.07;
+                let lengths = timeDiff / 0.0667;
                 let sign = timeDiff > 0 ? "+" : "";
                 lengthsText = `${sign}${lengths.toFixed(1)}L`;
             }
@@ -3769,7 +3800,7 @@ async function refreshPredictions(showNotif = true) {
                 : (topPickAvgTime !== null && dog.rawAvgTime !== null && !isNaN(topPickAvgTime) && !isNaN(dog.rawAvgTime))
                     ? (() => {
                         let timeDiff = dog.rawAvgTime - topPickAvgTime;
-                        let lengths = timeDiff / 0.07;
+                        let lengths = timeDiff / 0.0667;
                         let sign = timeDiff >= 0 ? "+" : "";
                         return `Margin vs Top: <strong class="font-mono text-slate-800 dark:text-slate-200">${sign}${timeDiff.toFixed(2)}s (${sign}${lengths.toFixed(1)}L)</strong>`;
                     })()
@@ -5016,7 +5047,7 @@ function showSavedPredictionDetails(index) {
             marginDisplay = '<span class="text-green-600 dark:text-green-400 font-bold">Top Pick</span>';
         } else if (topPickAvgTime !== null && topPickAvgTime !== undefined && dog.rawAvgTime !== null && dog.rawAvgTime !== undefined && !isNaN(topPickAvgTime) && !isNaN(dog.rawAvgTime)) {
             let timeDiff = dog.rawAvgTime - topPickAvgTime;
-            let lengths = timeDiff / 0.07;
+            let lengths = timeDiff / 0.0667;
             let sign = timeDiff >= 0 ? "+" : "";
             marginDisplay = `Margin vs Top: <strong class="font-mono text-slate-800 dark:text-slate-200">${sign}${timeDiff.toFixed(2)}s (${sign}${lengths.toFixed(1)}L)</strong>`;
         } else {
@@ -7163,4 +7194,46 @@ function handleWeightChange() {
     
     // 2. Immediately force the UI to re-render with the newly sorted list
     renderWinProbabilitiesMeter();
+}
+
+function toggleProbabilitySortOrder() {
+    if (!window.currentComputedResult || !window.currentComputedResult.scoredDogs) {
+        showNotification("Please run or refresh predictions first.");
+        return;
+    }
+
+    let scoredDogs = window.currentComputedResult.scoredDogs;
+
+    // Toggle manual/custom order state
+    let isCurrentlyManual = window.currentComputedResult.isManuallyOrdered;
+    
+    if (!isCurrentlyManual) {
+        // Activate manual mode & sort descending by Win Probability %
+        window.currentComputedResult.isManuallyOrdered = true;
+        scoredDogs.sort((a, b) => {
+            let probA = parseFloat(a.softmaxProb !== undefined ? a.softmaxProb : (a.winProb || 0));
+            let probB = parseFloat(b.softmaxProb !== undefined ? b.softmaxProb : (b.winProb || 0));
+            return probB - probA;
+        });
+        showNotification("Win probabilities sorted by highest percentage.", "success");
+    } else {
+        // Revert back to baseline order (Margin / Avg Time sort)
+        window.currentComputedResult.isManuallyOrdered = false;
+        scoredDogs.sort((a, b) => {
+            let timeA = (a.rawAvgTime !== null && !isNaN(a.rawAvgTime)) ? a.rawAvgTime : 999;
+            let timeB = (b.rawAvgTime !== null && !isNaN(b.rawAvgTime)) ? b.rawAvgTime : 999;
+            return timeA - timeB;
+        });
+        showNotification("Reset to standard time/margin sort order.");
+    }
+
+    // Save state globally
+    window.currentComputedResult.scoredDogs = scoredDogs;
+    window.currentScoredDogs = scoredDogs;
+
+    // Refresh display elements directly
+    updateTopPickCard();
+    if (typeof renderWinProbabilitiesMeter === 'function') {
+        renderWinProbabilitiesMeter();
+    }
 }
